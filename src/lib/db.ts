@@ -36,6 +36,24 @@ async function put<S extends keyof Stores>(store: S, value: Stores[S]): Promise<
   })
 }
 
+// Removes the tracker and every entry logged for it, together or not at all.
+export async function deleteTracker(trackerId: string): Promise<void> {
+  const db = await open()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(['trackers', 'entries'], 'readwrite')
+    transaction.objectStore('trackers').delete(trackerId)
+    const cursorRequest = transaction.objectStore('entries').openCursor()
+    cursorRequest.onsuccess = () => {
+      const cursor = cursorRequest.result
+      if (!cursor) return // every entry checked
+      if ((cursor.value as Entry).trackerId === trackerId) cursor.delete()
+      cursor.continue()
+    }
+    transaction.oncomplete = () => resolve()
+    transaction.onerror = () => reject(transaction.error)
+  })
+}
+
 export const listTrackers = () => getAll('trackers')
 export const listEntries = () => getAll('entries')
 export const saveTracker = (tracker: Tracker) => put('trackers', tracker)

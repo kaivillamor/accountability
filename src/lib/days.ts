@@ -7,6 +7,12 @@ export function dayOf(at: number): number {
   return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / DAY_MS
 }
 
+// Milliseconds since local midnight, by the clock on the wall.
+export function timeOfDay(at: number): number {
+  const date = new Date(at)
+  return ((date.getHours() * 60 + date.getMinutes()) * 60 + date.getSeconds()) * 1000 + date.getMilliseconds()
+}
+
 // 0 is Sunday, 6 is Saturday.
 export function weekday(day: number): number {
   return new Date(day * DAY_MS).getUTCDay()

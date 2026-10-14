@@ -160,8 +160,8 @@
 
 <div class="legend">
   <span>Less</span>
-  <svg width={5 * PITCH - 2} height={CELL} aria-hidden="true">
-    {#each [0, 1, 2, 3, 4] as level (level)}
+  <svg width={4 * PITCH - 2} height={CELL} aria-hidden="true">
+    {#each [0, 1, 2, 3] as level (level)}
       <rect class="cell level-{level}" x={level * PITCH} width={CELL} height={CELL} rx="2" />
     {/each}
   </svg>
@@ -258,10 +258,6 @@
 
   .level-3 {
     fill: var(--heat-3);
-  }
-
-  .level-4 {
-    fill: var(--heat-4);
   }
 
   .slipped {

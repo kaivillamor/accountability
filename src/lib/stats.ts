@@ -1,4 +1,4 @@
-import { DAY_MS, dayOf } from './days.ts'
+import { dayOf, timeOfDay } from './days.ts'
 import type { Entry, Tracker } from './model.ts'
 
 // Days in a row with something done. Today counts once done, and until then
@@ -16,11 +16,13 @@ export function habitStreak(entries: Entry[], now: number): number {
 }
 
 // Whole days since the last slip, or since tracking started if there hasn't been one.
+// Days go by the local clock, so a daylight-saving change can't shift when the count goes up.
 export function daysWithout(tracker: Tracker, entries: Entry[], now: number): number {
   const lastSlip = entries
     .filter((e) => e.kind === 'slipped')
     .reduce((latest, e) => Math.max(latest, e.at), tracker.createdAt)
-  return Math.floor((now - lastSlip) / DAY_MS)
+  const days = dayOf(now) - dayOf(lastSlip)
+  return timeOfDay(now) < timeOfDay(lastSlip) ? days - 1 : days
 }
 
 export function resistedCount(entries: Entry[]): number {

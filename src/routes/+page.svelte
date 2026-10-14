@@ -1,6 +1,6 @@
 <script lang="ts">
   import ActivityGrid from '#lib/ActivityGrid.svelte'
-  import { listEntries, listTrackers, saveEntry, saveTracker } from '#lib/db.ts'
+  import { deleteTracker, listEntries, listTrackers, saveEntry, saveTracker } from '#lib/db.ts'
   import type { Entry, Tracker, TrackerKind } from '#lib/model.ts'
   import { daysWithout, habitStreak, resistedCount, usedToday } from '#lib/stats.ts'
   import { count, formatAmount } from '#lib/text.ts'
@@ -55,6 +55,13 @@
     if (!confirm(`Log a slip for ${tracker.name}? This resets your days without.`)) return
     await log({ ...moment(tracker), kind: 'slipped' })
   }
+
+  async function removeTracker(tracker: Tracker) {
+    if (!confirm(`Delete ${tracker.name} and everything logged for it? This can't be undone.`)) return
+    await deleteTracker(tracker.id)
+    trackers = trackers.filter((t) => t.id !== tracker.id)
+    entries = entries.filter((e) => e.trackerId !== tracker.id)
+  }
 </script>
 
 <svelte:head>
@@ -75,8 +82,11 @@
     {#each trackers as tracker (tracker.id)}
       {@const trackerEntries = entries.filter((e) => e.trackerId === tracker.id)}
       <section>
-        <!-- The unit sits in the title, so bare amounts read right for any unit. -->
-        <h2>{tracker.name}{#if tracker.kind === 'usage'}{' '}<span class="unit">({tracker.unit})</span>{/if}</h2>
+        <header>
+          <!-- The unit sits in the title, so bare amounts read right for any unit. -->
+          <h2>{tracker.name}{#if tracker.kind === 'usage'}{' '}<span class="unit">({tracker.unit})</span>{/if}</h2>
+          <button class="delete" onclick={() => removeTracker(tracker)}>Delete</button>
+        </header>
         {#if tracker.kind === 'habit'}
           <p>{habitStreak(trackerEntries, now)}-day streak</p>
           <button onclick={() => log({ ...moment(tracker), kind: 'done' })}>Done</button>
@@ -153,6 +163,21 @@
   .unit {
     font-weight: normal;
     color: var(--ink-secondary);
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  /* An outline button, set apart from the logging buttons so it isn't hit by mistake. */
+  .delete {
+    border: 1px solid var(--border);
+    border-radius: 0.375rem;
+    background: none;
+    color: var(--ink);
   }
 
   p {

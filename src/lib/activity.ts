@@ -8,8 +8,8 @@ export type ActivityDay = {
   // Each done, resisted or usage log counts once. A slip adds no activity; it flags the day.
   count: number
   slipped: boolean
-  // 0 for nothing, then 1 to 4 relative to the busiest day shown.
-  level: 0 | 1 | 2 | 3 | 4
+  // 0 for nothing, then 1 to 3 relative to the busiest day shown.
+  level: 0 | 1 | 2 | 3
 }
 
 // The last `weeks` weeks as columns of Sunday-to-Saturday days, ending today.
@@ -41,5 +41,5 @@ export function activity(entries: Entry[], now: number, weeks: number): Activity
 
 function level(count: number, busiest: number): ActivityDay['level'] {
   if (count === 0) return 0
-  return Math.ceil((count / busiest) * 4) as 1 | 2 | 3 | 4
+  return Math.ceil((count / busiest) * 3) as 1 | 2 | 3
 }
