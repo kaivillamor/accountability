@@ -3,7 +3,7 @@
   import { listEntries, listTrackers, saveEntry, saveTracker } from '#lib/db.ts'
   import type { Entry, Tracker, TrackerKind } from '#lib/model.ts'
   import { daysWithout, habitStreak, resistedCount, usedToday } from '#lib/stats.ts'
-  import { count } from '#lib/text.ts'
+  import { count, formatAmount } from '#lib/text.ts'
 
   let trackers = $state<Tracker[]>([])
   let entries = $state<Entry[]>([])
@@ -65,19 +65,28 @@
   <h1>Accountability</h1>
 
   {#await loading then}
+    {#if trackers.length > 0}
+      <section>
+        <h2>Activity</h2>
+        <ActivityGrid {trackers} {entries} {now} />
+      </section>
+    {/if}
+
     {#each trackers as tracker (tracker.id)}
       {@const trackerEntries = entries.filter((e) => e.trackerId === tracker.id)}
       <section>
         <!-- The unit sits in the title, so bare amounts read right for any unit. -->
-        <h2>{tracker.name}{#if tracker.kind === 'usage'}<span class="unit"> ({tracker.unit})</span>{/if}</h2>
+        <h2>{tracker.name}{#if tracker.kind === 'usage'}{' '}<span class="unit">({tracker.unit})</span>{/if}</h2>
         {#if tracker.kind === 'habit'}
           <p>{habitStreak(trackerEntries, now)}-day streak</p>
           <button onclick={() => log({ ...moment(tracker), kind: 'done' })}>Done</button>
         {:else if tracker.kind === 'usage'}
-          <p>Today: {usedToday(trackerEntries, now)}</p>
+          <p>Today: {formatAmount(usedToday(trackerEntries, now))}</p>
           <form onsubmit={(event) => logAmount(event, tracker)}>
             <input
+              class="amount"
               name="amount"
+              placeholder="Amount"
               type="number"
               inputmode="decimal"
               step="any"
@@ -95,7 +104,6 @@
           <button onclick={() => log({ ...moment(tracker), kind: 'resisted' })}>Resisted</button>
           <button onclick={() => logSlip(tracker)}>Slipped</button>
         {/if}
-        <ActivityGrid {tracker} entries={trackerEntries} {now} />
       </section>
     {:else}
       <p>No trackers yet. Add one below.</p>
@@ -160,9 +168,14 @@
   button,
   input,
   select {
+    box-sizing: border-box;
     min-height: 2.75rem;
     font: inherit;
     padding: 0.4rem 0.75rem;
+  }
+
+  .amount {
+    width: 8rem;
   }
 
   button + button {
