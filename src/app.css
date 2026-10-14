@@ -1,0 +1,110 @@
+/* Chart colors come from the dataviz reference palette. Busier days are darker, from light to
+   dark blue, in both light and dark mode; the three steps are validated against both surfaces. */
+:root {
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --ink: #0b0b0b;
+  --ink-secondary: #52514e;
+  --ink-muted: #898781;
+  --border: rgba(11, 11, 11, 0.1);
+  --border-strong: rgba(11, 11, 11, 0.2);
+  --accent: #2a78d6;
+  --accent-ink: #ffffff;
+  --tint: rgba(42, 120, 214, 0.1);
+  --critical: #d03b3b;
+  --empty: #e1e0d9;
+  --heat-1: #86b6ef;
+  --heat-2: #3987e5;
+  --heat-3: #1c5cab;
+  --radius: 0.625rem;
+  --shadow: 0 1px 3px rgba(11, 11, 11, 0.06);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #f0efec;
+    --ink-secondary: #c3c2b7;
+    --border: rgba(255, 255, 255, 0.1);
+    --border-strong: rgba(255, 255, 255, 0.2);
+    --tint: rgba(57, 135, 229, 0.18);
+    --empty: #2c2c2a;
+    --shadow: none;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  /* Figtree ships with the app (see +layout.ts); sans-serif only shows while it loads. */
+  font-family: 'Figtree Variable', sans-serif;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+/* Buttons: primary for a card's main action, plain for the rest, danger for deleting.
+   Every control is at least 44px tall, a comfortable tap target. */
+button {
+  box-sizing: border-box;
+  min-height: 2.75rem;
+  padding: 0 1.1rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color 0.15s,
+    filter 0.15s;
+}
+
+button.primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+button.danger {
+  border-color: transparent;
+  background: var(--critical);
+  color: #ffffff;
+}
+
+/* Hover only where there's a pointer, so taps on phones don't leave buttons stuck highlighted. */
+@media (hover: hover) {
+  button:not(.primary, .danger):hover {
+    background: var(--tint);
+  }
+
+  button:is(.primary, .danger):hover {
+    filter: brightness(0.92);
+  }
+}
+
+button:active {
+  transform: translateY(1px);
+}
+
+input:not([type='checkbox'], [type='radio']) {
+  box-sizing: border-box;
+  min-height: 2.75rem;
+  padding: 0 0.85rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+input::placeholder {
+  color: var(--ink-muted);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

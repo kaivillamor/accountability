@@ -1,13 +1,32 @@
 <script lang="ts">
   import ActivityGrid from '#lib/ActivityGrid.svelte'
+  import ConfirmDialog from '#lib/ConfirmDialog.svelte'
   import { deleteTracker, listEntries, listTrackers, saveEntry, saveTracker } from '#lib/db.ts'
   import type { Entry, Tracker, TrackerKind } from '#lib/model.ts'
-  import { daysWithout, habitStreak, resistedCount, usedToday } from '#lib/stats.ts'
-  import { count, formatAmount } from '#lib/text.ts'
+  import {
+    bestStreak,
+    dailyAverage,
+    daysWithout,
+    doneCount,
+    habitStreak,
+    longestStretch,
+    resistedCount,
+    slipCount,
+    usedToday,
+    usedTotal,
+  } from '#lib/stats.ts'
+  import { count, formatAmount, plural } from '#lib/text.ts'
+
+  const KINDS: { kind: TrackerKind; label: string; hint: string }[] = [
+    { kind: 'habit', label: 'Habit', hint: 'Build a routine' },
+    { kind: 'usage', label: 'Usage', hint: 'Measure amounts' },
+    { kind: 'quit', label: 'Quit', hint: 'Stay away from it' },
+  ]
 
   let trackers = $state<Tracker[]>([])
   let entries = $state<Entry[]>([])
   let now = $state(Date.now())
+  let confirmDialog: ReturnType<typeof ConfirmDialog>
 
   const loading = Promise.all([listTrackers(), listEntries()]).then(([savedTrackers, savedEntries]) => {
     trackers = savedTrackers.toSorted((a, b) => a.createdAt - b.createdAt)
@@ -30,6 +49,9 @@
     const tracker: Tracker = kind === 'usage' ? { ...base, kind, unit: unit.trim() } : { ...base, kind }
     await saveTracker(tracker)
     trackers.push(tracker)
+    // Without this, `now` (refreshed every minute) can be older than the new tracker, and a
+    // quit tracker would start at -1 days without.
+    now = Date.now()
     name = ''
     unit = ''
   }
@@ -52,15 +74,31 @@
   }
 
   async function logSlip(tracker: Tracker) {
-    if (!confirm(`Log a slip for ${tracker.name}? This resets your days without.`)) return
+    const confirmed = await confirmDialog.ask({
+      title: `Log a slip for ${tracker.name}?`,
+      message: 'This resets your days without.',
+      confirmLabel: 'Log slip',
+      danger: false,
+    })
+    if (!confirmed) return
     await log({ ...moment(tracker), kind: 'slipped' })
   }
 
   async function removeTracker(tracker: Tracker) {
-    if (!confirm(`Delete ${tracker.name} and everything logged for it? This can't be undone.`)) return
+    const confirmed = await confirmDialog.ask({
+      title: `Delete ${tracker.name}?`,
+      message: "This removes the tracker and everything logged for it. It can't be undone.",
+      confirmLabel: 'Delete',
+      danger: true,
+    })
+    if (!confirmed) return
     await deleteTracker(tracker.id)
     trackers = trackers.filter((t) => t.id !== tracker.id)
     entries = entries.filter((e) => e.trackerId !== tracker.id)
+  }
+
+  function kindLabel(tracker: Tracker): string {
+    return KINDS.find((k) => k.kind === tracker.kind)!.label
   }
 </script>
 
@@ -73,7 +111,7 @@
 
   {#await loading then}
     {#if trackers.length > 0}
-      <section>
+      <section class="card">
         <h2>Activity</h2>
         <ActivityGrid {trackers} {entries} {now} />
       </section>
@@ -81,88 +119,129 @@
 
     {#each trackers as tracker (tracker.id)}
       {@const trackerEntries = entries.filter((e) => e.trackerId === tracker.id)}
-      <section>
+      <section class="card">
         <header>
-          <!-- The unit sits in the title, so bare amounts read right for any unit. -->
-          <h2>{tracker.name}{#if tracker.kind === 'usage'}{' '}<span class="unit">({tracker.unit})</span>{/if}</h2>
-          <button class="delete" onclick={() => removeTracker(tracker)}>Delete</button>
+          <div class="title">
+            <!-- The unit sits in the title, so bare amounts read right for any unit. -->
+            <h2>{tracker.name}{#if tracker.kind === 'usage'}{' '}<span class="unit">({tracker.unit})</span>{/if}</h2>
+            <span class="badge">{kindLabel(tracker)}</span>
+          </div>
+          <button class="icon" aria-label="Delete {tracker.name}" title="Delete" onclick={() => removeTracker(tracker)}>
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path
+                d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3"
+              />
+            </svg>
+          </button>
         </header>
+
         {#if tracker.kind === 'habit'}
-          <p>{habitStreak(trackerEntries, now)}-day streak</p>
-          <button onclick={() => log({ ...moment(tracker), kind: 'done' })}>Done</button>
+          {@const streak = habitStreak(trackerEntries, now)}
+          <p class="stat"><strong>{streak}</strong> {plural(streak, 'day')} in a row</p>
+          <dl class="stats">
+            <div><dt>Total</dt><dd>{count(doneCount(trackerEntries), 'time')}</dd></div>
+            <div><dt>Best streak</dt><dd>{count(bestStreak(trackerEntries), 'day')}</dd></div>
+          </dl>
+          <div class="actions">
+            <button class="primary" onclick={() => log({ ...moment(tracker), kind: 'done' })}>Done</button>
+          </div>
         {:else if tracker.kind === 'usage'}
-          <p>Today: {formatAmount(usedToday(trackerEntries, now))}</p>
-          <form onsubmit={(event) => logAmount(event, tracker)}>
+          <p class="stat"><strong>{formatAmount(usedToday(trackerEntries, now))}</strong> today</p>
+          <dl class="stats">
+            <div><dt>Total</dt><dd>{formatAmount(usedTotal(trackerEntries))}</dd></div>
+            <div><dt>Daily average</dt><dd>{formatAmount(dailyAverage(tracker, trackerEntries, now))}</dd></div>
+          </dl>
+          <form class="actions" onsubmit={(event) => logAmount(event, tracker)}>
             <input
               class="amount"
               name="amount"
-              placeholder="Amount"
               type="number"
               inputmode="decimal"
               step="any"
               min="0"
               required
+              placeholder="Amount"
               aria-label="Amount in {tracker.unit}"
             />
-            <button>Log</button>
+            <button class="primary">Log</button>
           </form>
         {:else}
-          <p>
-            {count(daysWithout(tracker, trackerEntries, now), 'day')} without · resisted
-            {count(resistedCount(trackerEntries), 'time')}
-          </p>
-          <button onclick={() => log({ ...moment(tracker), kind: 'resisted' })}>Resisted</button>
-          <button onclick={() => logSlip(tracker)}>Slipped</button>
+          {@const days = daysWithout(tracker, trackerEntries, now)}
+          <p class="stat"><strong>{days}</strong> {plural(days, 'day')} without</p>
+          <dl class="stats">
+            <div><dt>Resisted</dt><dd>{count(resistedCount(trackerEntries), 'time')}</dd></div>
+            <div><dt>Slipped</dt><dd>{count(slipCount(trackerEntries), 'time')}</dd></div>
+            <div><dt>Longest stretch</dt><dd>{count(longestStretch(tracker, trackerEntries, now), 'day')}</dd></div>
+          </dl>
+          <div class="actions">
+            <button class="primary" onclick={() => log({ ...moment(tracker), kind: 'resisted' })}>Resisted</button>
+            <button onclick={() => logSlip(tracker)}>Slipped</button>
+          </div>
         {/if}
       </section>
-    {:else}
-      <p>No trackers yet. Add one below.</p>
     {/each}
 
-    <form class="new-tracker" onsubmit={addTracker}>
-      <h2>New tracker</h2>
-      <label>Name <input bind:value={name} required /></label>
-      <label>
-        Type
-        <select bind:value={kind}>
-          <option value="habit">Habit: do it regularly</option>
-          <option value="usage">Usage: measure amounts</option>
-          <option value="quit">Quit: stay away from it</option>
-        </select>
-      </label>
-      {#if kind === 'usage'}
-        <label>Unit <input bind:value={unit} placeholder="cups, minutes, $" required /></label>
-      {/if}
-      <button>Add tracker</button>
-    </form>
+    <!-- Starts open when there are no trackers yet, so the first step is obvious. -->
+    <details class="card new-tracker" open={trackers.length === 0}>
+      <summary>New tracker</summary>
+      <form onsubmit={addTracker}>
+        <label class="field">
+          <span>Name</span>
+          <input bind:value={name} required placeholder="e.g. Morning run" />
+        </label>
+        <fieldset class="type">
+          <legend>Type</legend>
+          <div class="kinds">
+            {#each KINDS as option (option.kind)}
+              <label class="kind">
+                <input type="radio" name="kind" value={option.kind} bind:group={kind} />
+                <strong>{option.label}</strong>
+                <span>{option.hint}</span>
+              </label>
+            {/each}
+          </div>
+        </fieldset>
+        {#if kind === 'usage'}
+          <label class="field">
+            <span>Unit</span>
+            <input bind:value={unit} required placeholder="cups, minutes, $" />
+          </label>
+        {/if}
+        <button class="primary">Add tracker</button>
+      </form>
+    </details>
   {:catch error}
     <p role="alert">Couldn't open your saved data: {error.message}</p>
   {/await}
 </main>
 
+<ConfirmDialog bind:this={confirmDialog} />
+
 <style>
   main {
     max-width: 56rem;
     margin: 0 auto;
-    padding: 1rem;
+    padding: 1.25rem 1rem 3rem;
   }
 
-  section,
-  .new-tracker {
+  h1 {
+    margin: 0.5rem 0 1rem;
+    font-size: 1.9rem;
+    letter-spacing: -0.01em;
+  }
+
+  .card {
+    margin-block: 0.875rem;
+    padding: 1rem 1.15rem;
     border: 1px solid var(--border);
-    border-radius: 0.5rem;
-    padding: 0.75rem 1rem;
-    margin-block: 0.75rem;
+    border-radius: 0.875rem;
+    background: var(--surface);
+    box-shadow: var(--shadow);
   }
 
   h2 {
+    margin: 0;
     font-size: 1.1rem;
-    margin: 0 0 0.25rem;
-  }
-
-  .unit {
-    font-weight: normal;
-    color: var(--ink-secondary);
   }
 
   header {
@@ -172,38 +251,204 @@
     gap: 0.5rem;
   }
 
-  /* An outline button, set apart from the logging buttons so it isn't hit by mistake. */
-  .delete {
-    border: 1px solid var(--border);
-    border-radius: 0.375rem;
+  .title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .unit {
+    font-weight: normal;
+    color: var(--ink-secondary);
+  }
+
+  .badge {
+    padding: 0.1rem 0.55rem;
+    border-radius: 999px;
+    background: var(--tint);
+    color: var(--ink-secondary);
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  .icon {
+    display: inline-grid;
+    place-items: center;
+    min-width: 2.75rem;
+    padding: 0;
+    border-color: transparent;
     background: none;
+    color: var(--ink-muted);
+  }
+
+  .icon path {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  @media (hover: hover) {
+    .icon:hover {
+      color: var(--critical);
+    }
+  }
+
+  .stat {
+    margin: 0.6rem 0 0;
+    color: var(--ink-secondary);
+  }
+
+  .stat strong {
+    margin-right: 0.1rem;
     color: var(--ink);
+    font-size: 1.75rem;
+    line-height: 1;
   }
 
-  p {
-    margin: 0 0 0.5rem;
+  /* Label above value, as in the dataviz stat-tile pattern. */
+  .stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.75rem;
+    margin: 0.75rem 0 0;
   }
 
-  label {
-    display: block;
-    margin-block: 0.5rem;
+  .stats dt {
+    color: var(--ink-secondary);
+    font-size: 0.8rem;
   }
 
-  /* 44px tall: a comfortable tap target. */
-  button,
-  input,
-  select {
-    box-sizing: border-box;
-    min-height: 2.75rem;
-    font: inherit;
-    padding: 0.4rem 0.75rem;
+  .stats dd {
+    margin: 0;
+    font-weight: 600;
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.85rem;
   }
 
   .amount {
     width: 8rem;
   }
 
-  button + button {
-    margin-left: 0.5rem;
+  /* Closed, it's a dashed "+ New tracker" row inviting the next step. */
+  .new-tracker:not([open]) {
+    border-style: dashed;
+    background: none;
+    box-shadow: none;
+  }
+
+  .new-tracker summary {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-height: 2.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    list-style: none;
+  }
+
+  .new-tracker summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .new-tracker summary::before {
+    content: '+';
+    display: grid;
+    place-items: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: 50%;
+    background: var(--tint);
+    color: var(--accent);
+    font-size: 1.25rem;
+    line-height: 1;
+  }
+
+  .new-tracker[open] summary::before {
+    content: '−';
+  }
+
+  .new-tracker form {
+    display: grid;
+    gap: 1rem;
+    margin-top: 0.75rem;
+  }
+
+  .field {
+    display: grid;
+    gap: 0.35rem;
+  }
+
+  .field > span,
+  .type legend {
+    padding: 0;
+    color: var(--ink-secondary);
+    font-size: 0.85rem;
+    font-weight: 600;
+  }
+
+  .type {
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .type legend {
+    margin-bottom: 0.35rem;
+  }
+
+  .kinds {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.5rem;
+  }
+
+  .kind {
+    position: relative;
+    display: grid;
+    gap: 0.1rem;
+    padding: 0.7rem 0.85rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    cursor: pointer;
+  }
+
+  .kind span {
+    color: var(--ink-secondary);
+    font-size: 0.85rem;
+  }
+
+  /* The radio stays focusable for keyboards while the card shows the choice. */
+  .kind input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .kind:has(input:checked) {
+    border-color: var(--accent);
+    background: var(--tint);
+  }
+
+  .kind:has(input:focus-visible) {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .new-tracker button {
+    justify-self: start;
+  }
+
+  @media (max-width: 30rem) {
+    .kinds {
+      grid-template-columns: 1fr;
+    }
   }
 </style>

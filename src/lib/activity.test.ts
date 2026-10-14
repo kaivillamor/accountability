@@ -52,9 +52,29 @@ inEachTimeZone(() => {
     assert.equal(on(columns, 13).count, 1)
   })
 
-  test('levels are relative to the busiest day', () => {
-    const columns = activity([done('run', time(14, 8)), done('run', time(14, 18)), done('run', time(13, 8))], now(), 53)
-    assert.deepEqual([on(columns, 14).level, on(columns, 13).level, on(columns, 12).level], [3, 2, 0])
+  test('each extra entry makes a quiet day one shade darker', () => {
+    // A new user: one, two and three entries on three days.
+    const entries = [
+      done('run', time(14, 8)),
+      ...[8, 18].map((hour) => done('run', time(13, hour))),
+      ...[8, 12, 18].map((hour) => done('run', time(12, hour))),
+    ]
+    const columns = activity(entries, now(), 53)
+    assert.deepEqual([on(columns, 14).level, on(columns, 13).level, on(columns, 12).level, on(columns, 11).level], [1, 2, 3, 0])
+  })
+
+  test('a single entry starts at the lightest shade', () => {
+    assert.equal(on(activity([done('run', time(14, 8))], now(), 53), 14).level, 1)
+  })
+
+  test('busier days stretch the shades', () => {
+    const entries = [
+      ...[6, 8, 10, 12, 14, 16].map((hour) => done('run', time(14, hour))),
+      ...[8, 12, 16].map((hour) => done('run', time(13, hour))),
+      done('run', time(12, 8)),
+    ]
+    const columns = activity(entries, now(), 53)
+    assert.deepEqual([on(columns, 14).level, on(columns, 13).level, on(columns, 12).level], [3, 2, 1])
   })
 
   test('a slip flags the day without adding activity', () => {

@@ -4,41 +4,6 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
-    <style>
-      /* Colors from the dataviz reference palette. Dark mode has its own validated steps.
-         Busier days get more intense: darker in light mode, brighter and more vivid in dark mode. */
-      :root {
-        --surface: #fcfcfb;
-        --ink: #0b0b0b;
-        --ink-secondary: #52514e;
-        --ink-muted: #898781;
-        --border: rgba(11, 11, 11, 0.1);
-        --empty: #e1e0d9;
-        --heat-1: #86b6ef;
-        --heat-2: #3987e5;
-        --heat-3: #1c5cab;
-        --critical: #d03b3b;
-      }
-      @media (prefers-color-scheme: dark) {
-        :root {
-          --surface: #1a1a19;
-          --ink: #f0efec;
-          --ink-secondary: #c3c2b7;
-          --border: rgba(255, 255, 255, 0.1);
-          --empty: #2c2c2a;
-          --heat-1: #184f95;
-          --heat-2: #256abf;
-          --heat-3: #3987e5;
-        }
-      }
-      body {
-        margin: 0;
-        background: var(--surface);
-        color: var(--ink);
-        /* Figtree ships with the app (see +layout.ts); sans-serif only shows while it loads. */
-        font-family: 'Figtree Variable', sans-serif;
-      }
-    </style>
     %sveltekit.head%
   </head>
   <body>

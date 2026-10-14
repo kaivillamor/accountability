@@ -2,7 +2,18 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { Entry, Tracker } from './model.ts'
-import { daysWithout, habitStreak, resistedCount, usedToday } from './stats.ts'
+import {
+  bestStreak,
+  dailyAverage,
+  daysWithout,
+  doneCount,
+  habitStreak,
+  longestStretch,
+  resistedCount,
+  slipCount,
+  usedToday,
+  usedTotal,
+} from './stats.ts'
 import { inEachTimeZone } from './time-zones.testing.ts'
 
 // October 2026, local time in the zone under test.
@@ -78,5 +89,46 @@ inEachTimeZone(() => {
 
   test('used today sums only today’s amounts', () => {
     assert.equal(usedToday([used(time(13, 8), 2), used(time(13, 15), 1.5), used(time(12, 9), 5)], time(13, 20)), 3.5)
+  })
+
+  test('done count counts every done entry', () => {
+    assert.equal(doneCount([done(time(12, 8)), done(time(12, 18)), done(time(13, 8)), slipped(time(13, 9))]), 3)
+  })
+
+  test('best streak finds the longest run, even one that has ended', () => {
+    const entries = [1, 2, 3, 5, 6].map((date) => done(time(date, 9)))
+    assert.equal(bestStreak(entries), 3)
+  })
+
+  test('best streak counts a day once and is 0 with nothing done', () => {
+    assert.equal(bestStreak([done(time(4, 8)), done(time(4, 20)), done(time(5, 8))]), 2)
+    assert.equal(bestStreak([]), 0)
+  })
+
+  test('best streak holds across daylight-saving changes', () => {
+    const entries = Array.from({ length: 42 }, (_, i) => done(new Date(2026, 8, 25 + i, 0, 30).getTime()))
+    assert.equal(bestStreak(entries), 42)
+  })
+
+  test('used total sums every amount', () => {
+    assert.equal(usedTotal([used(time(1, 8), 2), used(time(5, 8), 1.5), used(time(13, 9), 0.5)]), 4)
+  })
+
+  test('daily average spreads the total over every day since tracking started, today included', () => {
+    const coffee: Tracker = { id: 't', name: 'Coffee', createdAt: time(1, 8), kind: 'usage', unit: 'cups' }
+    assert.equal(dailyAverage(coffee, [used(time(3, 8), 6), used(time(12, 8), 6)], time(12, 20)), 1)
+  })
+
+  test('slip count counts only slips', () => {
+    assert.equal(slipCount([slipped(time(5, 12)), resisted(time(6, 12)), slipped(time(9, 12))]), 2)
+  })
+
+  test('longest stretch is the longest gap between start, slips and now', () => {
+    const entries = [slipped(time(5, 12)), slipped(time(15, 12))]
+    assert.equal(longestStretch(quitTracker(), entries, time(20, 12)), 10)
+  })
+
+  test('longest stretch without slips runs from tracking start to now', () => {
+    assert.equal(longestStretch(quitTracker(), [], time(13, 12)), 12)
   })
 })

@@ -214,9 +214,14 @@
     gap: 0.4rem;
     min-height: 2.75rem;
     padding: 0 0.85rem;
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 999px;
     cursor: pointer;
+  }
+
+  .chip:has(input:checked) {
+    border-color: var(--accent);
+    background: var(--tint);
   }
 
   .chip:has(input:not(:checked)) {

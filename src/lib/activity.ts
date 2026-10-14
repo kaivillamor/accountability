@@ -8,7 +8,7 @@ export type ActivityDay = {
   // Each done, resisted or usage log counts once. A slip adds no activity; it flags the day.
   count: number
   slipped: boolean
-  // 0 for nothing, then 1 to 3 relative to the busiest day shown.
+  // 0 for nothing, then shades 1 to 3, darker with more activity (see `activity`).
   level: 0 | 1 | 2 | 3
 }
 
@@ -30,16 +30,21 @@ export function activity(entries: Entry[], now: number, weeks: number): Activity
     count: dayEntries.filter((e) => e.kind !== 'slipped').length,
     slipped: dayEntries.some((e) => e.kind === 'slipped'),
   }))
-  const busiest = Math.max(...days.map((d) => d.count))
+  // Shades are relative to the busiest day, but the scale never shrinks below one entry per
+  // shade. Otherwise a new user's only entry would already be the darkest shade, and logging
+  // more could never make a day darker.
+  const scale = Math.max(SHADES, ...days.map((d) => d.count))
   const columns: ActivityDay[][] = []
   for (const d of days) {
     if (weekday(d.day) === 0) columns.push([])
-    columns[columns.length - 1].push({ ...d, level: level(d.count, busiest) })
+    columns[columns.length - 1].push({ ...d, level: level(d.count, scale) })
   }
   return columns
 }
 
-function level(count: number, busiest: number): ActivityDay['level'] {
+const SHADES = 3
+
+function level(count: number, scale: number): ActivityDay['level'] {
   if (count === 0) return 0
-  return Math.ceil((count / busiest) * 3) as 1 | 2 | 3
+  return Math.ceil((count / scale) * SHADES) as 1 | 2 | 3
 }
