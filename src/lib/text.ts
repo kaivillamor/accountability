@@ -14,3 +14,22 @@ const compactFormat = new Intl.NumberFormat('en-US', { notation: 'compact', maxi
 export function formatAmount(amount: number): string {
   return amount < 10_000 ? fullFormat.format(amount) : compactFormat.format(amount)
 }
+
+// An amount with the unit the user typed for the tracker, like "2.5 cups" or "1 cup".
+export function formatQuantity(amount: number, unit: string): string {
+  return `${formatAmount(amount)} ${unitFor(amount, unit)}`
+}
+
+// Units are typed in plural ("cups", "minutes"), which reads right for every amount but 1.
+export function unitFor(amount: number, unit: string): string {
+  return amount === 1 ? singular(unit) : unit
+}
+
+// Drops a regular English plural ending. Abbreviations and symbols ("km", "$") have none, so
+// they stay as typed. Words like "cherries" come out as "cherrie"; that's the accepted miss.
+function singular(unit: string): string {
+  if (/[^e]aches$/i.test(unit)) return unit.slice(0, -1) // headaches → headache (beaches is below)
+  if (/(ss|x|ch|sh)es$/i.test(unit)) return unit.slice(0, -2) // glasses, boxes, inches, dishes
+  if (/[a-z][^\Wsiua]s$/i.test(unit)) return unit.slice(0, -1) // cups, minutes, lbs, calories
+  return unit
+}

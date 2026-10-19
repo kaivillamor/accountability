@@ -15,7 +15,7 @@
     usedToday,
     usedTotal,
   } from '#lib/stats.ts'
-  import { count, formatAmount, plural } from '#lib/text.ts'
+  import { count, formatAmount, formatQuantity, plural, unitFor } from '#lib/text.ts'
 
   const KINDS: { kind: TrackerKind; label: string; hint: string }[] = [
     { kind: 'habit', label: 'Habit', hint: 'Build a routine' },
@@ -122,8 +122,7 @@
       <section class="card">
         <header>
           <div class="title">
-            <!-- The unit sits in the title, so bare amounts read right for any unit. -->
-            <h2>{tracker.name}{#if tracker.kind === 'usage'}{' '}<span class="unit">({tracker.unit})</span>{/if}</h2>
+            <h2>{tracker.name}</h2>
             <span class="badge">{kindLabel(tracker)}</span>
           </div>
           <button class="icon" aria-label="Delete {tracker.name}" title="Delete" onclick={() => removeTracker(tracker)}>
@@ -146,23 +145,29 @@
             <button class="primary" onclick={() => log({ ...moment(tracker), kind: 'done' })}>Done</button>
           </div>
         {:else if tracker.kind === 'usage'}
-          <p class="stat"><strong>{formatAmount(usedToday(trackerEntries, now))}</strong> today</p>
+          {@const today = usedToday(trackerEntries, now)}
+          <p class="stat"><strong>{formatAmount(today)}</strong> {unitFor(today, tracker.unit)} today</p>
           <dl class="stats">
-            <div><dt>Total</dt><dd>{formatAmount(usedTotal(trackerEntries))}</dd></div>
-            <div><dt>Daily average</dt><dd>{formatAmount(dailyAverage(tracker, trackerEntries, now))}</dd></div>
+            <div><dt>Total</dt><dd>{formatQuantity(usedTotal(trackerEntries), tracker.unit)}</dd></div>
+            <div>
+              <dt>Daily average</dt>
+              <dd>{formatQuantity(dailyAverage(tracker, trackerEntries, now), tracker.unit)}</dd>
+            </div>
           </dl>
           <form class="actions" onsubmit={(event) => logAmount(event, tracker)}>
-            <input
-              class="amount"
-              name="amount"
-              type="number"
-              inputmode="decimal"
-              step="any"
-              min="0"
-              required
-              placeholder="Amount"
-              aria-label="Amount in {tracker.unit}"
-            />
+            <label class="amount">
+              <input
+                name="amount"
+                type="number"
+                inputmode="decimal"
+                step="any"
+                min="0"
+                required
+                placeholder="Amount"
+                aria-label="Amount in {tracker.unit}"
+              />
+              <span aria-hidden="true">{tracker.unit}</span>
+            </label>
             <button class="primary">Log</button>
           </form>
         {:else}
@@ -204,7 +209,7 @@
         {#if kind === 'usage'}
           <label class="field">
             <span>Unit</span>
-            <input bind:value={unit} required placeholder="cups, minutes, $" />
+            <input bind:value={unit} required placeholder="cups, minutes, dollars" />
           </label>
         {/if}
         <button class="primary">Add tracker</button>
@@ -256,11 +261,6 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 0.5rem;
-  }
-
-  .unit {
-    font-weight: normal;
-    color: var(--ink-secondary);
   }
 
   .badge {
@@ -334,7 +334,15 @@
   }
 
   .amount {
-    width: 8rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--ink-secondary);
+  }
+
+  .amount input {
+    width: 7rem;
+    color: var(--ink);
   }
 
   /* Closed, it's a dashed "+ New tracker" row inviting the next step. */

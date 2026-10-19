@@ -2,7 +2,7 @@
   import { activity, type ActivityDay } from '#lib/activity.ts'
   import { dayOf, formatDay, isMonthStart } from '#lib/days.ts'
   import type { Entry, Tracker } from '#lib/model.ts'
-  import { count, formatAmount } from '#lib/text.ts'
+  import { count, formatQuantity } from '#lib/text.ts'
 
   let { trackers, entries, now }: { trackers: Tracker[]; entries: Entry[]; now: number } = $props()
 
@@ -50,22 +50,19 @@
     tip = { day, left, top: cellBox.top - wrapBox.top, alignRight: left > wrapBox.width / 2 }
   }
 
-  function name(tracker: Tracker): string {
-    return tracker.kind === 'usage' ? `${tracker.name} (${tracker.unit})` : tracker.name
-  }
-
   // What each shown tracker logged that day, in tracker order.
   function breakdown(d: ActivityDay) {
     return shown
       .map((tracker) => ({ tracker, logged: d.entries.filter((e) => e.trackerId === tracker.id) }))
       .filter(({ logged }) => logged.length > 0)
-      .map(({ tracker, logged }) => ({ id: tracker.id, name: name(tracker), summary: summarize(tracker, logged) }))
+      .map(({ tracker, logged }) => ({ id: tracker.id, name: tracker.name, summary: summarize(tracker, logged) }))
   }
 
   function summarize(tracker: Tracker, logged: Entry[]): string {
     if (tracker.kind === 'habit') return logged.length === 1 ? 'Done' : `Done ${count(logged.length, 'time')}`
     if (tracker.kind === 'usage') {
-      return formatAmount(logged.filter((e) => e.kind === 'used').reduce((total, e) => total + e.amount, 0))
+      const total = logged.filter((e) => e.kind === 'used').reduce((sum, e) => sum + e.amount, 0)
+      return formatQuantity(total, tracker.unit)
     }
     const resisted = logged.filter((e) => e.kind === 'resisted').length
     if (!logged.some((e) => e.kind === 'slipped')) return `Resisted ${count(resisted, 'time')}`
@@ -83,7 +80,7 @@
     {#each trackers as tracker (tracker.id)}
       <label class="chip">
         <input type="checkbox" checked={!hidden.includes(tracker.id)} onchange={() => toggle(tracker.id)} />
-        {name(tracker)}
+        {tracker.name}
       </label>
     {/each}
   </fieldset>
