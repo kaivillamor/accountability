@@ -43,7 +43,11 @@ export function goalStreak(goal: number, entries: Entry[], now: number): number 
 
 // The longest run of days in a row with something done, at any time.
 export function bestStreak(entries: Entry[]): number {
-  const days = doneDays(entries)
+  return longestRun(doneDays(entries))
+}
+
+// The longest run of consecutive days in a sorted list of days.
+function longestRun(days: number[]): number {
   let best = 0
   let run = 0
   for (const [i, day] of days.entries()) {
@@ -51,6 +55,44 @@ export function bestStreak(entries: Entry[]): number {
     best = Math.max(best, run)
   }
   return best
+}
+
+// The local days on which a staged habit was complete: every stage done, oldest first. A stage
+// counts from the day it joined, so adding a stage never undoes days that were complete.
+export function completeDays(stages: Tracker[], entries: Entry[]): number[] {
+  const doneOn = new Map(stages.map((stage) => [stage.id, new Set(doneDays(entries.filter((e) => e.trackerId === stage.id)))]))
+  return doneDays(entries).filter((day) => {
+    const counted = stages.filter((stage) => dayOf(stage.parent!.since) <= day)
+    return counted.length > 0 && counted.every((stage) => doneOn.get(stage.id)!.has(day))
+  })
+}
+
+// Days in a row with every stage done.
+export function stagedStreak(stages: Tracker[], entries: Entry[], now: number): number {
+  return streakOf(new Set(completeDays(stages, entries)), now)
+}
+
+// The longest run of days in a row with every stage done, at any time.
+export function stagedBest(stages: Tracker[], entries: Entry[]): number {
+  return longestRun(completeDays(stages, entries))
+}
+
+// Whether a tracker has done its part today, which is what a group's progress counts: a habit
+// done, every stage of a staged habit done, a usage goal reached (or, without a goal, anything
+// logged), and no slip for quit. `entries` are the tracker's own, or its stages'.
+export function doneToday(tracker: Tracker, stages: Tracker[], entries: Entry[], now: number): boolean {
+  const today = dayOf(now)
+  const todays = entries.filter((e) => dayOf(e.at) === today)
+  switch (tracker.kind) {
+    case 'habit':
+      return todays.some((e) => e.kind === 'done')
+    case 'staged':
+      return completeDays(stages, todays).includes(today)
+    case 'usage':
+      return tracker.dailyGoal === undefined ? todays.some((e) => e.kind === 'used') : usedTotal(todays) >= tracker.dailyGoal
+    case 'quit':
+      return !todays.some((e) => e.kind === 'slipped')
+  }
 }
 
 export function doneCount(entries: Entry[]): number {

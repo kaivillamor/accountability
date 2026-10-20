@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { flushSync } from 'svelte'
+
   type Request = { title: string; message: string; confirmLabel: string; danger: boolean }
 
   let dialog: HTMLDialogElement
@@ -8,6 +10,9 @@
   // Opens the dialog and resolves to whether the user confirmed.
   export function ask(next: Request): Promise<boolean> {
     request = next
+    // The buttons have to be on the page before the dialog opens, or the first question after a
+    // page load focuses the dialog itself instead of Cancel.
+    flushSync()
     dialog.showModal()
     return new Promise((resolve) => (settle = resolve))
   }

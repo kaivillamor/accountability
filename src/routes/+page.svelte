@@ -1,40 +1,56 @@
 <script lang="ts">
   import ActivityGrid from '#lib/ActivityGrid.svelte'
-  import ConfirmDialog from '#lib/ConfirmDialog.svelte'
-  import ThemePicker from '#lib/ThemePicker.svelte'
-  import { deleteTracker, listEntries, listTrackers, saveEntry, saveTracker } from '#lib/db.ts'
-  import type { Entry, Tracker, TrackerKind } from '#lib/model.ts'
   import {
-    bestStreak,
-    dailyAverage,
-    daysWithout,
-    doneCount,
-    goalStreak,
-    habitStreak,
-    longestStretch,
-    resistedCount,
-    slipCount,
-    usedToday,
-    usedTotal,
-  } from '#lib/stats.ts'
-  import { count, formatAmount, formatQuantity, plural, unitFor } from '#lib/text.ts'
+    after,
+    arrange,
+    dissolve,
+    idsOf,
+    lead,
+    move,
+    nextOrder,
+    remove,
+    withChange,
+    type Card,
+    type Destination,
+  } from '#lib/arrange.ts'
+  import ChoiceDialog from '#lib/ChoiceDialog.svelte'
+  import ConfirmDialog from '#lib/ConfirmDialog.svelte'
+  import { apply, listEntries, listGroups, listTrackers, saveEntry, saveGroup, saveTracker } from '#lib/db.ts'
+  import { Drag } from '#lib/drag.svelte.ts'
+  import GroupBox from '#lib/GroupBox.svelte'
+  import type { MenuItem } from '#lib/Menu.svelte'
+  import type { Change, Entry, Group, Tracker } from '#lib/model.ts'
+  import ThemePicker from '#lib/ThemePicker.svelte'
+  import TrackerCard, { type Mark } from '#lib/TrackerCard.svelte'
+  import { count } from '#lib/text.ts'
 
-  const KINDS: { kind: TrackerKind; label: string; hint: string }[] = [
+  // The kinds the form creates. A staged habit comes from dragging habits together.
+  type NewKind = 'habit' | 'usage' | 'quit'
+  const KINDS: { kind: NewKind; label: string; hint: string }[] = [
     { kind: 'habit', label: 'Habit', hint: 'Build a routine' },
     { kind: 'usage', label: 'Usage', hint: 'Measure amounts' },
     { kind: 'quit', label: 'Quit', hint: 'Stay away from it' },
   ]
 
   let trackers = $state<Tracker[]>([])
+  let groups = $state<Group[]>([])
   let entries = $state<Entry[]>([])
   let now = $state(Date.now())
+  // The tracker or group whose name is being edited.
+  let renaming = $state<string>()
   let confirmDialog: ReturnType<typeof ConfirmDialog>
+  let choiceDialog: ReturnType<typeof ChoiceDialog>
   // The new-tracker form: open while there are no trackers, so the first step is obvious, and
   // closed after adding one, so the new card is in view.
   let formOpen = $state(false)
 
-  const loading = Promise.all([listTrackers(), listEntries()]).then(([savedTrackers, savedEntries]) => {
-    trackers = savedTrackers.toSorted((a, b) => a.createdAt - b.createdAt)
+  const items = $derived(arrange(trackers, groups))
+  // Every card in page order, grouped or not.
+  const cards = $derived(items.flatMap((item) => (item.type === 'group' ? item.cards : [item.card])))
+
+  const loading = Promise.all([listTrackers(), listGroups(), listEntries()]).then(([savedTrackers, savedGroups, savedEntries]) => {
+    trackers = savedTrackers
+    groups = savedGroups
     entries = savedEntries
     formOpen = trackers.length === 0
   })
@@ -46,7 +62,7 @@
   })
 
   let name = $state('')
-  let kind = $state<TrackerKind>('habit')
+  let kind = $state<NewKind>('habit')
   let unit = $state('')
   let goal = $state<number | null>(null)
   // "64 ounces" in the unit field means the amount belongs in the daily goal.
@@ -54,7 +70,7 @@
 
   async function addTracker(event: SubmitEvent) {
     event.preventDefault()
-    const base = { id: crypto.randomUUID(), name: name.trim(), createdAt: Date.now() }
+    const base = { id: crypto.randomUUID(), name: name.trim(), createdAt: Date.now(), order: nextOrder(trackers, groups) }
     const tracker: Tracker =
       kind === 'usage'
         ? { ...base, kind, unit: unit.trim(), ...(goal ? { dailyGoal: goal } : {}) }
@@ -70,21 +86,10 @@
     formOpen = false
   }
 
-  function moment(tracker: Tracker) {
-    return { id: crypto.randomUUID(), trackerId: tracker.id, at: Date.now() }
-  }
-
   async function log(entry: Entry) {
     await saveEntry(entry)
     entries.push(entry)
     now = Date.now()
-  }
-
-  function logAmount(event: SubmitEvent & { currentTarget: HTMLFormElement }, tracker: Tracker) {
-    event.preventDefault()
-    const amount = Number(new FormData(event.currentTarget).get('amount'))
-    event.currentTarget.reset()
-    return log({ ...moment(tracker), kind: 'used', amount })
   }
 
   async function logSlip(tracker: Tracker) {
@@ -95,31 +100,204 @@
       danger: false,
     })
     if (!confirmed) return
-    await log({ ...moment(tracker), kind: 'slipped' })
+    await log({ id: crypto.randomUUID(), trackerId: tracker.id, at: Date.now(), kind: 'slipped' })
+  }
+
+  // Saves a rearrangement or deletion, then shows it.
+  async function save(change: Change) {
+    await apply(change)
+    trackers = withChange(trackers, change.putTrackers, change.deleteTrackerIds)
+    groups = withChange(groups, change.putGroups, change.deleteGroupIds)
+    entries = entries.filter((e) => !change.deleteTrackerIds.includes(e.trackerId))
+  }
+
+  async function moveTo(id: string, to: Destination) {
+    const { change, created } = move(trackers, groups, id, to, Date.now())
+    await save(change)
+    // A new group or staged habit opens with its name ready to type over.
+    if (created) renaming = created
+  }
+
+  async function rename(id: string, newName: string | undefined) {
+    renaming = undefined
+    const group = groups.find((g) => g.id === id)
+    const tracker = trackers.find((t) => t.id === id)
+    if (newName === undefined || newName === (group ?? tracker)?.name) return
+    if (group) {
+      await updateGroup({ ...$state.snapshot(group), name: newName })
+    } else if (tracker) {
+      const renamed = { ...$state.snapshot(tracker), name: newName }
+      await saveTracker(renamed)
+      trackers = trackers.map((t) => (t.id === id ? renamed : t))
+    }
+  }
+
+  async function updateGroup(next: Group) {
+    await saveGroup(next)
+    groups = groups.map((g) => (g.id === next.id ? next : g))
+  }
+
+  function toggle(group: Group) {
+    return updateGroup({ ...$state.snapshot(group), collapsed: !group.collapsed })
   }
 
   async function removeTracker(tracker: Tracker) {
+    const stages = trackers.filter((t) => t.parent?.id === tracker.id).length
     const confirmed = await confirmDialog.ask({
       title: `Delete ${tracker.name}?`,
-      message: "This removes the tracker and everything logged for it. It can't be undone.",
+      message:
+        stages > 0
+          ? `This removes it, its ${count(stages, 'stage')} and everything logged for them. It can't be undone.`
+          : "This removes the tracker and everything logged for it. It can't be undone.",
       confirmLabel: 'Delete',
       danger: true,
     })
     if (!confirmed) return
-    await deleteTracker(tracker.id)
-    trackers = trackers.filter((t) => t.id !== tracker.id)
-    entries = entries.filter((e) => e.trackerId !== tracker.id)
+    await save(remove(trackers, groups, tracker.id, Date.now()))
     if (trackers.length === 0) formOpen = true
   }
 
-  function kindLabel(tracker: Tracker): string {
-    return KINDS.find((k) => k.kind === tracker.kind)!.label
+  async function separate(tracker: Tracker) {
+    const confirmed = await confirmDialog.ask({
+      title: `Separate ${tracker.name}?`,
+      message: 'Its stages become habits of their own, and everything logged stays. Its streak starts over if you put them back together.',
+      confirmLabel: 'Separate',
+      danger: false,
+    })
+    if (confirmed) await save(dissolve(trackers, groups, tracker.id, Date.now()))
   }
+
+  type Choice = { id: string; label: string; detail: string; to: Destination }
+
+  // Groups to join, and cards on their own to start a group with.
+  function groupChoices(tracker: Tracker): Choice[] {
+    return items.flatMap((item): Choice[] => {
+      if (item.type === 'group') {
+        if (item.group.id === tracker.groupId) return []
+        return [{ id: item.group.id, label: item.group.name, detail: count(item.cards.length, 'tracker'), to: { type: 'list', groupId: item.group.id } }]
+      }
+      const other = item.card.tracker
+      if (other.id === tracker.id) return []
+      return [{ id: other.id, label: other.name, detail: 'New group', to: { type: 'beside', id: other.id, after: true } }]
+    })
+  }
+
+  // Staged habits to join, and habits to make a staged habit with.
+  function stageChoices(tracker: Tracker): Choice[] {
+    return cards.flatMap(({ tracker: other, stages }): Choice[] => {
+      if (other.id === tracker.id) return []
+      if (other.kind === 'staged') return [{ id: other.id, label: other.name, detail: count(stages.length, 'stage'), to: { type: 'into', id: other.id } }]
+      if (other.kind === 'habit') return [{ id: other.id, label: other.name, detail: 'New multi-stage habit', to: { type: 'into', id: other.id } }]
+      return []
+    })
+  }
+
+  // The menu's way to do what dragging does, for keyboards and screen readers.
+  async function choose(tracker: Tracker, title: string, choices: Choice[]) {
+    const id = await choiceDialog.choose({ title, choices })
+    const choice = choices.find((c) => c.id === id)
+    if (choice) await moveTo(tracker.id, choice.to)
+  }
+
+  function trackerMenu(tracker: Tracker): MenuItem[] {
+    const menu: MenuItem[] = [{ label: 'Rename', run: () => (renaming = tracker.id) }]
+    const parent = trackers.find((t) => t.id === tracker.parent?.id)
+    const group = groups.find((g) => g.id === tracker.groupId)
+    if (parent) {
+      menu.push({ label: `Take out of ${parent.name}`, run: () => moveTo(tracker.id, after(trackers, groups, parent.id)) })
+    } else {
+      const groupWith = groupChoices(tracker)
+      if (groupWith.length > 0) menu.push({ label: 'Group with…', run: () => choose(tracker, `Group ${tracker.name} with…`, groupWith) })
+      const stageWith = tracker.kind === 'habit' ? stageChoices(tracker) : []
+      if (stageWith.length > 0) {
+        menu.push({ label: 'Make a stage of…', run: () => choose(tracker, `Make ${tracker.name} a stage of…`, stageWith) })
+      }
+      if (tracker.kind === 'staged') menu.push({ label: 'Separate stages', run: () => separate(tracker) })
+      if (group) menu.push({ label: `Take out of ${group.name}`, run: () => moveTo(tracker.id, after(trackers, groups, group.id)) })
+    }
+    menu.push({ label: 'Delete', critical: true, run: () => removeTracker(tracker) })
+    return menu
+  }
+
+  function groupMenu(group: Group): MenuItem[] {
+    return [
+      { label: 'Rename', run: () => (renaming = group.id) },
+      { label: 'Ungroup', run: () => save(dissolve(trackers, groups, group.id, Date.now())) },
+    ]
+  }
+
+  const drag = new Drag(moveTo)
+
+  // Where the dragged card would land: a line where it would go, a ring around the card or group
+  // it would join, and a ring and tint around the habit it would go into.
+  const marks = $derived.by(() => {
+    const marks = new Map<string, Mark>()
+    const add = (id: string, mark: Mark) => marks.set(id, { ...marks.get(id), ...mark })
+    const drop = drag.drop
+    if (!drop || drop.type === 'stay') return marks
+    if (drop.type === 'into') return add(drop.id, { ring: 'into' })
+    if (drop.type === 'beside') {
+      const target = trackers.find((t) => t.id === drop.id)!
+      const holder = target.parent?.id ?? target.groupId
+      add(drop.id, { line: drop.after ? 'after' : 'before' })
+      return holder === undefined ? add(drop.id, { ring: 'join' }) : add(holder, { ring: 'into' })
+    }
+    const group = items.find((item) => item.type === 'group' && item.group.id === drop.groupId)
+    if (group?.type === 'group') add(group.group.id, { ring: 'into' })
+    const list = (group?.type === 'group' ? group.cards.map((c) => c.tracker) : items.map(lead))
+      .map((x) => x.id)
+      .filter((id) => id !== drag.subject)
+    const index = drop.index ?? list.length
+    if (index < list.length) add(list[index], { line: 'before' })
+    else if (list.length > 0) add(list[list.length - 1], { line: 'after' })
+    return marks
+  })
+  const mark = (id: string) => marks.get(id)
+
+  // What dropping now would do, in words, shown above the pointer.
+  const dropLabel = $derived.by(() => {
+    const drop = drag.drop
+    const subject = drag.subject
+    if (!drop || !subject || drop.type === 'stay') return undefined
+    const nameOf = (id: string) => (trackers.find((t) => t.id === id) ?? groups.find((g) => g.id === id))!.name
+    const moving = trackers.find((t) => t.id === subject)
+    const from = moving?.parent?.id ?? moving?.groupId
+    if (drop.type === 'into') {
+      const target = trackers.find((t) => t.id === drop.id)!
+      if (target.kind === 'habit') return `Make stages with ${target.name}`
+      return from === target.id ? 'Move to the end' : `Add as a stage of ${target.name}`
+    }
+    if (drop.type === 'beside') {
+      const target = trackers.find((t) => t.id === drop.id)!
+      const holder = target.parent?.id ?? target.groupId
+      if (holder === undefined) return `Group with ${target.name}`
+      if (holder === from) return 'Move here'
+      return target.parent ? `Add as a stage of ${nameOf(holder)}` : `Add to ${nameOf(holder)}`
+    }
+    if (drop.groupId) return drop.groupId === from ? 'Move here' : `Add to ${nameOf(drop.groupId)}`
+    return from ? `Take out of ${nameOf(from)}` : 'Move here'
+  })
 </script>
 
 <svelte:head>
   <title>Accountability</title>
 </svelte:head>
+
+{#snippet trackerCard(card: Card)}
+  {@const ids = idsOf(card)}
+  <TrackerCard
+    {card}
+    entries={entries.filter((e) => ids.includes(e.trackerId))}
+    {now}
+    menu={trackerMenu}
+    {renaming}
+    {rename}
+    {log}
+    slip={logSlip}
+    {mark}
+    dragging={drag.subject}
+  />
+{/snippet}
 
 <main>
   <div class="top">
@@ -131,99 +309,39 @@
     {#if trackers.length > 0}
       <section class="card">
         <h2>Activity</h2>
-        <ActivityGrid {trackers} {entries} {now} />
+        <ActivityGrid {cards} {entries} {now} />
       </section>
     {/if}
 
-    {#each trackers as tracker (tracker.id)}
-      {@const trackerEntries = entries.filter((e) => e.trackerId === tracker.id)}
-      <section class="card">
-        <header>
-          <div class="title">
-            <h2>{tracker.name}</h2>
-            <span class="badge">{kindLabel(tracker)}</span>
-          </div>
-          <button class="icon" aria-label="Delete {tracker.name}" title="Delete" onclick={() => removeTracker(tracker)}>
-            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-              <path
-                d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3"
-              />
-            </svg>
-          </button>
-        </header>
-
-        {#if tracker.kind === 'habit'}
-          {@const streak = habitStreak(trackerEntries, now)}
-          <p class="stat"><strong>{streak}</strong> {plural(streak, 'day')} in a row</p>
-          <dl class="stats">
-            <div><dt>Total</dt><dd>{count(doneCount(trackerEntries), 'time')}</dd></div>
-            <div><dt>Best streak</dt><dd>{count(bestStreak(trackerEntries), 'day')}</dd></div>
-          </dl>
-          <div class="actions">
-            <button class="primary" onclick={() => log({ ...moment(tracker), kind: 'done' })}>Done</button>
-          </div>
-        {:else if tracker.kind === 'usage'}
-          {@const today = usedToday(trackerEntries, now)}
-          {#if tracker.dailyGoal}
-            {@const goal = tracker.dailyGoal}
-            <p class="stat">
-              <strong>{formatAmount(today)}</strong> / {formatQuantity(goal, tracker.unit)} today
-              {#if today >= goal}<span class="goal-met">✓ Goal met</span>{/if}
-            </p>
-            <div
-              class="meter"
-              role="progressbar"
-              aria-label="Today toward the daily goal"
-              aria-valuemin={0}
-              aria-valuemax={goal}
-              aria-valuenow={today}
-            >
-              <div class:reached={today >= goal} style:--progress="{Math.min(today / goal, 1) * 100}%"></div>
-            </div>
-          {:else}
-            <p class="stat"><strong>{formatAmount(today)}</strong> {unitFor(today, tracker.unit)} today</p>
-          {/if}
-          <dl class="stats">
-            {#if tracker.dailyGoal}
-              <div><dt>Goal streak</dt><dd>{count(goalStreak(tracker.dailyGoal, trackerEntries, now), 'day')}</dd></div>
-            {/if}
-            <div><dt>Total</dt><dd>{formatQuantity(usedTotal(trackerEntries), tracker.unit)}</dd></div>
-            <div>
-              <dt>Daily average</dt>
-              <dd>{formatQuantity(dailyAverage(tracker, trackerEntries, now), tracker.unit)}</dd>
-            </div>
-          </dl>
-          <form class="actions" onsubmit={(event) => logAmount(event, tracker)}>
-            <label class="amount">
-              <input
-                name="amount"
-                type="number"
-                inputmode="decimal"
-                step="any"
-                min="0"
-                required
-                placeholder="Amount"
-                aria-label="Amount in {tracker.unit}"
-              />
-              <span aria-hidden="true">{tracker.unit}</span>
-            </label>
-            <button class="primary">Log</button>
-          </form>
+    <!-- data-dropping says what letting go now would do, for the card in hand (see .lifted in app.css). -->
+    <div class="board" data-dropping={drag.drop?.type === 'stay' ? undefined : drag.drop?.type} {@attach drag.attach}>
+      {#each items as item (lead(item).id)}
+        {#if item.type === 'group'}
+          <GroupBox
+            group={item.group}
+            cards={item.cards}
+            {entries}
+            {now}
+            menu={groupMenu(item.group)}
+            {renaming}
+            {rename}
+            toggle={() => toggle(item.group)}
+            {mark}
+            dragging={drag.subject}
+          >
+            {#each item.cards as card (card.tracker.id)}
+              {@render trackerCard(card)}
+            {/each}
+          </GroupBox>
         {:else}
-          {@const days = daysWithout(tracker, trackerEntries, now)}
-          <p class="stat"><strong>{days}</strong> {plural(days, 'day')} without</p>
-          <dl class="stats">
-            <div><dt>Resisted</dt><dd>{count(resistedCount(trackerEntries), 'time')}</dd></div>
-            <div><dt>Slipped</dt><dd>{count(slipCount(trackerEntries), 'time')}</dd></div>
-            <div><dt>Longest stretch</dt><dd>{count(longestStretch(tracker, trackerEntries, now), 'day')}</dd></div>
-          </dl>
-          <div class="actions">
-            <button class="primary" onclick={() => log({ ...moment(tracker), kind: 'resisted' })}>Resisted</button>
-            <button onclick={() => logSlip(tracker)}>Slipped</button>
-          </div>
+          {@render trackerCard(item.card)}
         {/if}
-      </section>
-    {/each}
+      {/each}
+    </div>
+
+    {#if trackers.length > 1}
+      <p class="hint">Hold and drag a card against another to group them, or onto the middle of a habit to make stages.</p>
+    {/if}
 
     <details class="card new-tracker" bind:open={formOpen}>
       <summary>New tracker</summary>
@@ -273,7 +391,12 @@
   {/await}
 </main>
 
+{#if dropLabel}
+  <div class="drop-label" style:left="{drag.pointer.x}px" style:top="{drag.pointer.y}px">{dropLabel}</div>
+{/if}
+
 <ConfirmDialog bind:this={confirmDialog} />
+<ChoiceDialog bind:this={choiceDialog} />
 
 <style>
   main {
@@ -297,167 +420,30 @@
     letter-spacing: -0.01em;
   }
 
-  .card {
-    margin-block: 0.875rem;
-    padding: 1rem 1.15rem;
-    border: 1px solid var(--border);
-    border-radius: 0.875rem;
-    background: var(--surface);
-    box-shadow: var(--shadow);
-  }
-
   h2 {
     margin: 0;
     font-size: 1.1rem;
   }
 
-  header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-  }
-
-  .title {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .badge {
-    padding: 0.1rem 0.55rem;
-    border-radius: 999px;
-    background: var(--tint);
+  .hint {
+    margin: 0.5rem 0 0;
     color: var(--ink-secondary);
-    font-size: 0.75rem;
-    font-weight: 600;
+    font-size: 0.85rem;
   }
 
-  .icon {
-    display: inline-grid;
-    place-items: center;
-    min-width: 2.75rem;
-    padding: 0;
-    border-color: transparent;
-    background: none;
-    color: var(--ink-muted);
-  }
-
-  .icon path {
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 2;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-  }
-
-  @media (hover: hover) {
-    .icon:hover {
-      color: var(--critical);
-    }
-  }
-
-  .stat {
-    margin: 0.6rem 0 0;
-    color: var(--ink-secondary);
-  }
-
-  .stat strong {
-    margin-right: 0.1rem;
-    color: var(--ink);
-    font-size: 1.75rem;
-    line-height: 1;
-  }
-
-  /* Label above value, as in the dataviz stat-tile pattern. */
-  .stats {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem 1.75rem;
-    margin: 0.75rem 0 0;
-  }
-
-  .stats dt {
-    color: var(--ink-secondary);
-    font-size: 0.8rem;
-  }
-
-  .stats dd {
-    margin: 0;
-    font-weight: 600;
-  }
-
-  .actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    margin-top: 0.85rem;
-  }
-
-  .goal-met {
-    margin-left: 0.5rem;
-    color: var(--good-ink);
+  /* Follows the pointer, above the finger on a phone. */
+  .drop-label {
+    position: fixed;
+    z-index: 3;
+    translate: -50% calc(-100% - 2.25rem);
+    padding: 0.35rem 0.65rem;
+    border-radius: 0.375rem;
+    background: var(--ink);
+    color: var(--surface);
     font-size: 0.85rem;
     font-weight: 600;
-    transition: opacity 0.3s ease 0.8s;
-  }
-
-  /* A meter: the accent fill on a lighter tint of the accent. The fill slides to today's
-     progress, and once the goal is reached it turns green as it arrives at the end. */
-  .meter {
-    max-width: 20rem;
-    height: 0.5rem;
-    margin-top: 0.6rem;
-    overflow: hidden;
-    border-radius: 999px;
-    background: var(--tint);
-  }
-
-  .meter > div {
-    width: var(--progress);
-    height: 100%;
-    border-radius: inherit;
-    background: var(--accent);
-    transition:
-      width 0.8s ease-out,
-      background-color 0.3s ease 0.8s;
-  }
-
-  .meter > .reached {
-    background: var(--good);
-  }
-
-  /* Where a new bar and "Goal met" label start, so they fill up and fade in on arrival. */
-  @starting-style {
-    .meter > div,
-    .meter > .reached {
-      width: 0;
-      background-color: var(--accent);
-    }
-
-    .goal-met {
-      opacity: 0;
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .meter > div,
-    .goal-met {
-      transition: none;
-    }
-  }
-
-  .amount {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    color: var(--ink-secondary);
-  }
-
-  .amount input {
-    width: 7rem;
-    color: var(--ink);
+    white-space: nowrap;
+    pointer-events: none;
   }
 
   /* Closed, it's a dashed "+ New tracker" row inviting the next step. */

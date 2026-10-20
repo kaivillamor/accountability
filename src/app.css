@@ -145,3 +145,174 @@ input::placeholder {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* Cards: the activity grid, each tracker and the new-tracker form. */
+.card {
+  position: relative;
+  margin-block: 0.875rem;
+  padding: 1rem 1.15rem;
+  border: 1px solid var(--border);
+  border-radius: 0.875rem;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+/* A borderless button around an icon, like a card's ⋯ menu. */
+.icon {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  min-width: 2.75rem;
+  padding: 0;
+  border-color: transparent;
+  background: none;
+  color: var(--ink-muted);
+}
+
+/* A status that went well, like "✓ Goal met". The check keeps it from relying on color. */
+.met {
+  color: var(--good-ink);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+/* A meter: the accent fill on a lighter tint of the accent. The fill slides to its level, and
+   once it's full it turns green as it arrives at the end. */
+.meter {
+  max-width: 20rem;
+  height: 0.5rem;
+  margin-top: 0.6rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--tint);
+}
+
+.meter > div {
+  width: var(--progress);
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition:
+    width 0.8s ease-out,
+    background-color 0.3s ease 0.8s;
+}
+
+.meter > .reached {
+  background: var(--good);
+}
+
+/* Where a new bar starts, so it fills up on arrival. */
+@starting-style {
+  .meter > div,
+  .meter > .reached {
+    width: 0;
+    background-color: var(--accent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .meter > div {
+    transition: none;
+  }
+}
+
+/* Drag and drop (see src/lib/drag.svelte.ts). Text in a draggable can't be selected, so a held
+   finger picks the card up instead of selecting a word. */
+[data-drag] {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Six dots marking a handle. On a phone it drags right away, without holding first. */
+.grip {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 1.5rem;
+  min-height: 2.75rem;
+  margin-left: -0.6rem;
+  color: var(--ink-muted);
+  cursor: grab;
+  touch-action: none;
+}
+
+.grip::before {
+  content: '';
+  width: 10px;
+  height: 16px;
+  background: radial-gradient(currentColor 1.4px, transparent 1.7px) 0 0 / 5px 5.33px;
+}
+
+/* The card, stage or group in hand, lifted above the rest. Over a place it can drop, it shrinks
+   so the line or ring under it shows, and more so going into a habit, like an app into a folder. */
+.lifted {
+  position: relative;
+  z-index: 2;
+  scale: 1.02;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.22);
+  cursor: grabbing;
+  transition: scale 0.15s ease-out;
+}
+
+.board[data-dropping] .lifted {
+  scale: 0.92;
+}
+
+.board[data-dropping='into'] .lifted {
+  scale: 0.8;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lifted {
+    transition: none;
+  }
+}
+
+/* Where it would land: a line in the gap before or after an item, a ring around the card or
+   group it would join, and a tinted ring around the habit or group it would go into. */
+.drop-before,
+.drop-after,
+.drop-join,
+.drop-into {
+  position: relative;
+}
+
+.drop-before::before,
+.drop-after::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+/* Centered in the 0.875rem gap between cards. */
+.drop-before::before {
+  top: calc(-0.4375rem - 2.5px);
+}
+
+.drop-after::after {
+  bottom: calc(-0.4375rem - 2.5px);
+}
+
+/* Stages sit edge to edge, so their line runs along the edge. */
+.stage.drop-before::before {
+  top: -1.5px;
+}
+
+.stage.drop-after::after {
+  bottom: -1.5px;
+}
+
+.drop-join,
+.drop-into {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.drop-into {
+  background-image: linear-gradient(var(--tint), var(--tint));
+}

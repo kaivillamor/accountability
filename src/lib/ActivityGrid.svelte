@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { activity, type ActivityDay } from '#lib/activity.ts'
+  import { activity, dayLines, type ActivityDay } from '#lib/activity.ts'
+  import { idsOf, type Card } from '#lib/arrange.ts'
   import { dayOf, formatDay, isMonthStart } from '#lib/days.ts'
-  import type { Entry, Tracker } from '#lib/model.ts'
-  import { usedTotal } from '#lib/stats.ts'
-  import { count, formatAmount, formatQuantity } from '#lib/text.ts'
+  import type { Entry } from '#lib/model.ts'
 
-  let { trackers, entries, now }: { trackers: Tracker[]; entries: Entry[]; now: number } = $props()
+  // Every card in page order. A staged habit's card stands for its stages.
+  let { cards, entries, now }: { cards: Card[]; entries: Entry[]; now: number } = $props()
 
   const WEEKS = 53
   const CELL = 13
@@ -18,12 +18,13 @@
     { row: 5, name: 'Fri' },
   ]
 
-  // Trackers switched off in the filter, so new trackers show up automatically.
+  // Cards switched off in the filter, so new trackers show up automatically.
   let hidden = $state<string[]>([])
-  const shown = $derived(trackers.filter((t) => !hidden.includes(t.id)))
+  const shown = $derived(cards.filter((card) => !hidden.includes(card.tracker.id)))
+  const shownIds = $derived(shown.flatMap(idsOf))
   const columns = $derived(
     activity(
-      entries.filter((e) => shown.some((t) => t.id === e.trackerId)),
+      entries.filter((e) => shownIds.includes(e.trackerId)),
       now,
       WEEKS,
     ),
@@ -51,30 +52,9 @@
     tip = { day, left, top: cellBox.top - wrapBox.top, alignRight: left > wrapBox.width / 2 }
   }
 
-  // What each shown tracker logged that day, in tracker order.
+  // What each shown card logged that day, in card order.
   function breakdown(d: ActivityDay) {
-    return shown
-      .map((tracker) => ({ tracker, logged: d.entries.filter((e) => e.trackerId === tracker.id) }))
-      .filter(({ logged }) => logged.length > 0)
-      .map(({ tracker, logged }) => ({
-        id: tracker.id,
-        name: tracker.name,
-        summary: summarize(tracker, logged),
-        goalMet: tracker.kind === 'usage' && tracker.dailyGoal !== undefined && usedTotal(logged) >= tracker.dailyGoal,
-      }))
-  }
-
-  function summarize(tracker: Tracker, logged: Entry[]): string {
-    if (tracker.kind === 'habit') return logged.length === 1 ? 'Done' : `Done ${count(logged.length, 'time')}`
-    if (tracker.kind === 'usage') {
-      // With a goal, show progress the way the card does: "144 / 64 ounces".
-      const total = usedTotal(logged)
-      if (tracker.dailyGoal === undefined) return formatQuantity(total, tracker.unit)
-      return `${formatAmount(total)} / ${formatQuantity(tracker.dailyGoal, tracker.unit)}`
-    }
-    const resisted = logged.filter((e) => e.kind === 'resisted').length
-    if (!logged.some((e) => e.kind === 'slipped')) return `Resisted ${count(resisted, 'time')}`
-    return resisted === 0 ? 'Slipped' : `Slipped, resisted ${count(resisted, 'time')}`
+    return dayLines(shown, d.entries, d.day)
   }
 
   function dateLabel(day: number): string {
@@ -82,10 +62,10 @@
   }
 </script>
 
-{#if trackers.length > 1}
+{#if cards.length > 1}
   <fieldset class="filter">
     <legend>Show</legend>
-    {#each trackers as tracker (tracker.id)}
+    {#each cards as { tracker } (tracker.id)}
       <label class="chip">
         <input type="checkbox" checked={!hidden.includes(tracker.id)} onchange={() => toggle(tracker.id)} />
         {tracker.name}
@@ -171,7 +151,7 @@
     {/each}
   </svg>
   <span>More</span>
-  {#if shown.some((t) => t.kind === 'quit')}
+  {#if shown.some((card) => card.tracker.kind === 'quit')}
     <svg width={CELL} height={CELL} aria-hidden="true">
       <rect class="cell slipped" width={CELL} height={CELL} rx="2" />
       <path class="cross" d="M4 4l5 5m0-5l-5 5" />

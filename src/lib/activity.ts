@@ -1,5 +1,8 @@
+import type { Card } from './arrange.ts'
 import { dayOf, weekday } from './days.ts'
-import type { Entry } from './model.ts'
+import type { Entry, Tracker } from './model.ts'
+import { usedTotal } from './stats.ts'
+import { count, formatAmount, formatQuantity } from './text.ts'
 
 export type ActivityDay = {
   day: number
@@ -47,4 +50,42 @@ const SHADES = 3
 function level(count: number, scale: number): ActivityDay['level'] {
   if (count === 0) return 0
   return Math.ceil((count / scale) * SHADES) as 1 | 2 | 3
+}
+
+// One card's part of a day, like "Done" for Run or "144 / 64 ounces" for Water.
+export type DayLine = { id: string; name: string; summary: string; goalMet: boolean }
+
+// What each card logged on a day, in card order. A staged habit sums up its stages ("2 of 3
+// stages", or "Done" once all are), except what a stage logged before the day it joined, which
+// shows under the stage's own name, as it did then.
+export function dayLines(cards: Card[], dayEntries: Entry[], day: number): DayLine[] {
+  return cards.flatMap(({ tracker, stages }) => {
+    if (tracker.kind !== 'staged') return lineFor(tracker, dayEntries)
+    const joined = stages.filter((stage) => dayOf(stage.parent!.since) <= day)
+    const done = joined.filter((stage) => dayEntries.some((e) => e.trackerId === stage.id)).length
+    const summary = done === joined.length ? 'Done' : `${done} of ${joined.length} stages`
+    const own = done > 0 ? [{ id: tracker.id, name: tracker.name, summary, goalMet: false }] : []
+    return [...own, ...stages.filter((stage) => !joined.includes(stage)).flatMap((stage) => lineFor(stage, dayEntries))]
+  })
+}
+
+function lineFor(tracker: Tracker, dayEntries: Entry[]): DayLine[] {
+  const logged = dayEntries.filter((e) => e.trackerId === tracker.id)
+  if (logged.length === 0) return []
+  const goalMet = tracker.kind === 'usage' && tracker.dailyGoal !== undefined && usedTotal(logged) >= tracker.dailyGoal
+  return [{ id: tracker.id, name: tracker.name, summary: summarize(tracker, logged), goalMet }]
+}
+
+// A habit, usage or quit tracker's day in words. Staged habits have no entries of their own.
+function summarize(tracker: Tracker, logged: Entry[]): string {
+  if (tracker.kind === 'habit') return logged.length === 1 ? 'Done' : `Done ${count(logged.length, 'time')}`
+  if (tracker.kind === 'usage') {
+    // With a goal, show progress the way the card does: "144 / 64 ounces".
+    const total = usedTotal(logged)
+    if (tracker.dailyGoal === undefined) return formatQuantity(total, tracker.unit)
+    return `${formatAmount(total)} / ${formatQuantity(tracker.dailyGoal, tracker.unit)}`
+  }
+  const resisted = logged.filter((e) => e.kind === 'resisted').length
+  if (!logged.some((e) => e.kind === 'slipped')) return `Resisted ${count(resisted, 'time')}`
+  return resisted === 0 ? 'Slipped' : `Slipped, resisted ${count(resisted, 'time')}`
 }

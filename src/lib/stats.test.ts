@@ -1,17 +1,22 @@
 /// <reference types="node" />
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { dayOf } from './days.ts'
 import type { Entry, Tracker } from './model.ts'
 import {
   bestStreak,
+  completeDays,
   dailyAverage,
   daysWithout,
   doneCount,
+  doneToday,
   goalStreak,
   habitStreak,
   longestStretch,
   resistedCount,
   slipCount,
+  stagedBest,
+  stagedStreak,
   usedToday,
   usedTotal,
 } from './stats.ts'
@@ -22,16 +27,25 @@ function time(date: number, hour: number): number {
   return new Date(2026, 9, date, hour).getTime()
 }
 
-function entry(at: number): { id: string; trackerId: string; at: number } {
-  return { id: crypto.randomUUID(), trackerId: 't', at }
+function entry(at: number, trackerId = 't'): { id: string; trackerId: string; at: number } {
+  return { id: crypto.randomUUID(), trackerId, at }
 }
-const done = (at: number): Entry => ({ ...entry(at), kind: 'done' })
+const done = (at: number, trackerId?: string): Entry => ({ ...entry(at, trackerId), kind: 'done' })
 const used = (at: number, amount: number): Entry => ({ ...entry(at), kind: 'used', amount })
 const slipped = (at: number): Entry => ({ ...entry(at), kind: 'slipped' })
 const resisted = (at: number): Entry => ({ ...entry(at), kind: 'resisted' })
 
 function quitTracker(): Tracker {
-  return { id: 't', name: 'Smoking', createdAt: time(1, 12), kind: 'quit' }
+  return { id: 't', name: 'Smoking', createdAt: time(1, 12), order: 0, kind: 'quit' }
+}
+
+// A stage of the staged habit "workout" that joined at `since`.
+function stage(id: string, since: number): Tracker {
+  return { id, name: id, createdAt: time(1, 12), order: 0, kind: 'habit', parent: { id: 'workout', since } }
+}
+
+function workout(): Tracker {
+  return { id: 'workout', name: 'Workout', createdAt: time(10, 8), order: 0, kind: 'staged' }
 }
 
 inEachTimeZone(() => {
@@ -116,7 +130,7 @@ inEachTimeZone(() => {
   })
 
   test('daily average spreads the total over every day since tracking started, today included', () => {
-    const coffee: Tracker = { id: 't', name: 'Coffee', createdAt: time(1, 8), kind: 'usage', unit: 'cups' }
+    const coffee: Tracker = { id: 't', name: 'Coffee', createdAt: time(1, 8), order: 0, kind: 'usage', unit: 'cups' }
     assert.equal(dailyAverage(coffee, [used(time(3, 8), 6), used(time(12, 8), 6)], time(12, 20)), 1)
   })
 
@@ -145,5 +159,54 @@ inEachTimeZone(() => {
 
   test('longest stretch without slips runs from tracking start to now', () => {
     assert.equal(longestStretch(quitTracker(), [], time(13, 12)), 12)
+  })
+
+  test('a staged habit is complete on the days every stage was done', () => {
+    const stages = [stage('run', time(10, 8)), stage('squats', time(10, 8))]
+    const entries = [done(time(10, 7), 'run'), done(time(10, 19), 'squats'), done(time(11, 7), 'run'), done(time(12, 7), 'run'), done(time(12, 21), 'squats')]
+    assert.deepEqual(completeDays(stages, entries), [10, 12].map((date) => dayOf(time(date, 12))))
+    assert.equal(stagedStreak(stages, entries, time(12, 22)), 1)
+    assert.equal(stagedBest(stages, entries), 1)
+  })
+
+  test('a stage counts from the day it joined, so adding one keeps the streak so far', () => {
+    const stages = [stage('run', time(10, 8)), stage('squats', time(12, 18))]
+    const entries = [done(time(10, 7), 'run'), done(time(11, 7), 'run'), done(time(12, 7), 'run'), done(time(12, 19), 'squats')]
+    assert.equal(stagedStreak(stages, entries, time(12, 22)), 3)
+    // Until squats is done on the day it joined, that day isn't complete and the streak carries over.
+    assert.equal(stagedStreak(stages, entries.slice(0, 3), time(12, 22)), 2)
+  })
+
+  test('days before any stage joined don’t count toward a staged habit', () => {
+    const entries = [done(time(10, 7), 'run'), done(time(11, 7), 'run'), done(time(12, 7), 'run')]
+    assert.deepEqual(completeDays([stage('run', time(12, 6))], entries), [dayOf(time(12, 12))])
+  })
+
+  test('a staged habit streak carries over from yesterday until every stage is done today', () => {
+    const stages = [stage('run', time(10, 8)), stage('squats', time(10, 8))]
+    const entries = [10, 11].flatMap((date) => [done(time(date, 9), 'run'), done(time(date, 18), 'squats')])
+    assert.equal(stagedStreak(stages, [...entries, done(time(12, 7), 'run')], time(12, 9)), 2)
+    assert.equal(stagedStreak(stages, [...entries, done(time(12, 7), 'run'), done(time(12, 8), 'squats')], time(12, 9)), 3)
+  })
+
+  test('done today means a habit done, every stage done, a goal reached or no slip', () => {
+    const now = time(13, 20)
+    const run: Tracker = { id: 't', name: 'Run', createdAt: time(1, 8), order: 0, kind: 'habit' }
+    assert.equal(doneToday(run, [], [done(time(13, 8))], now), true)
+    assert.equal(doneToday(run, [], [done(time(12, 8))], now), false)
+
+    const stages = [stage('run', time(10, 8)), stage('squats', time(10, 8))]
+    assert.equal(doneToday(workout(), stages, [done(time(13, 7), 'run')], now), false)
+    assert.equal(doneToday(workout(), stages, [done(time(13, 7), 'run'), done(time(13, 9), 'squats')], now), true)
+
+    const water: Tracker = { id: 't', name: 'Water', createdAt: time(1, 8), order: 0, kind: 'usage', unit: 'ounces', dailyGoal: 64 }
+    assert.equal(doneToday(water, [], [used(time(13, 8), 40), used(time(12, 8), 40)], now), false)
+    assert.equal(doneToday(water, [], [used(time(13, 8), 40), used(time(13, 12), 24)], now), true)
+    const coffee: Tracker = { id: 't', name: 'Coffee', createdAt: time(1, 8), order: 0, kind: 'usage', unit: 'cups' }
+    assert.equal(doneToday(coffee, [], [used(time(13, 8), 1)], now), true)
+    assert.equal(doneToday(coffee, [], [], now), false)
+
+    assert.equal(doneToday(quitTracker(), [], [slipped(time(12, 22))], now), true)
+    assert.equal(doneToday(quitTracker(), [], [slipped(time(13, 1))], now), false)
   })
 })

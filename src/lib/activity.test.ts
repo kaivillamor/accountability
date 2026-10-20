@@ -1,9 +1,10 @@
 /// <reference types="node" />
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { activity, type ActivityDay } from './activity.ts'
+import { activity, dayLines, type ActivityDay } from './activity.ts'
+import type { Card } from './arrange.ts'
 import { dayOf, weekday } from './days.ts'
-import type { Entry } from './model.ts'
+import type { Entry, Tracker } from './model.ts'
 import { inEachTimeZone } from './time-zones.testing.ts'
 
 // October 2026, local time in the zone under test.
@@ -85,5 +86,47 @@ inEachTimeZone(() => {
   test('entries older than the weeks shown are left out', () => {
     const columns = activity([done('run', new Date(2025, 0, 1, 12).getTime())], now(), 53)
     assert.ok(columns.flat().every((d) => d.entries.length === 0))
+  })
+
+  test('a day’s lines name what each card logged, in card order', () => {
+    const tracker = (id: string, rest: Partial<Tracker>): Tracker => ({ id, name: id, createdAt: time(1, 8), order: 0, kind: 'habit', ...rest }) as Tracker
+    const cards: Card[] = [
+      { tracker: tracker('Water', { kind: 'usage', unit: 'ounces', dailyGoal: 64 }), stages: [] },
+      { tracker: tracker('Run', {}), stages: [] },
+      { tracker: tracker('Smoking', { kind: 'quit' }), stages: [] },
+    ]
+    const entries = [done('Run', time(14, 7)), used('Water', time(14, 8), 100), used('Water', time(14, 12), 44), slipped('Smoking', time(14, 22)), resisted('Smoking', time(14, 9))]
+    assert.deepEqual(
+      dayLines(cards, entries, dayOf(time(14, 12))).map((line) => [line.name, line.summary, line.goalMet]),
+      [
+        ['Water', '144 / 64 ounces', true],
+        ['Run', 'Done', false],
+        ['Smoking', 'Slipped, resisted 1 time', false],
+      ],
+    )
+  })
+
+  test('a staged habit’s line counts its stages done that day', () => {
+    const stage = (id: string, since: number): Tracker => ({ id, name: id, createdAt: time(1, 8), order: 0, kind: 'habit', parent: { id: 'workout', since } })
+    const card: Card = {
+      tracker: { id: 'workout', name: 'Workout', createdAt: time(10, 8), order: 0, kind: 'staged' },
+      stages: [stage('run', time(10, 8)), stage('squats', time(10, 8)), stage('lunges', time(13, 8))],
+    }
+    const lines = (date: number, entries: Entry[]) => dayLines([card], entries, dayOf(time(date, 12))).map((line) => `${line.name}: ${line.summary}`)
+    assert.deepEqual(lines(12, [done('run', time(12, 7))]), ['Workout: 1 of 2 stages'])
+    assert.deepEqual(lines(12, [done('run', time(12, 7)), done('squats', time(12, 9))]), ['Workout: Done'])
+    assert.deepEqual(lines(14, [done('lunges', time(14, 7))]), ['Workout: 1 of 3 stages'])
+    assert.deepEqual(lines(11, []), [])
+  })
+
+  test('what a stage logged before it joined shows under its own name', () => {
+    const card: Card = {
+      tracker: { id: 'workout', name: 'Workout', createdAt: time(12, 8), order: 0, kind: 'staged' },
+      stages: [{ id: 'run', name: 'Run', createdAt: time(1, 8), order: 0, kind: 'habit', parent: { id: 'workout', since: time(12, 8) } }],
+    }
+    assert.deepEqual(
+      dayLines([card], [done('run', time(9, 7)), done('run', time(9, 18))], dayOf(time(9, 12))).map((line) => `${line.name}: ${line.summary}`),
+      ['Run: Done 2 times'],
+    )
   })
 })
