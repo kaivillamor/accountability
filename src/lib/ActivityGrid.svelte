@@ -2,7 +2,8 @@
   import { activity, type ActivityDay } from '#lib/activity.ts'
   import { dayOf, formatDay, isMonthStart } from '#lib/days.ts'
   import type { Entry, Tracker } from '#lib/model.ts'
-  import { count, formatQuantity } from '#lib/text.ts'
+  import { usedTotal } from '#lib/stats.ts'
+  import { count, formatAmount, formatQuantity } from '#lib/text.ts'
 
   let { trackers, entries, now }: { trackers: Tracker[]; entries: Entry[]; now: number } = $props()
 
@@ -55,14 +56,21 @@
     return shown
       .map((tracker) => ({ tracker, logged: d.entries.filter((e) => e.trackerId === tracker.id) }))
       .filter(({ logged }) => logged.length > 0)
-      .map(({ tracker, logged }) => ({ id: tracker.id, name: tracker.name, summary: summarize(tracker, logged) }))
+      .map(({ tracker, logged }) => ({
+        id: tracker.id,
+        name: tracker.name,
+        summary: summarize(tracker, logged),
+        goalMet: tracker.kind === 'usage' && tracker.dailyGoal !== undefined && usedTotal(logged) >= tracker.dailyGoal,
+      }))
   }
 
   function summarize(tracker: Tracker, logged: Entry[]): string {
     if (tracker.kind === 'habit') return logged.length === 1 ? 'Done' : `Done ${count(logged.length, 'time')}`
     if (tracker.kind === 'usage') {
-      const total = logged.filter((e) => e.kind === 'used').reduce((sum, e) => sum + e.amount, 0)
-      return formatQuantity(total, tracker.unit)
+      // With a goal, show progress the way the card does: "144 / 64 ounces".
+      const total = usedTotal(logged)
+      if (tracker.dailyGoal === undefined) return formatQuantity(total, tracker.unit)
+      return `${formatAmount(total)} / ${formatQuantity(tracker.dailyGoal, tracker.unit)}`
     }
     const resisted = logged.filter((e) => e.kind === 'resisted').length
     if (!logged.some((e) => e.kind === 'slipped')) return `Resisted ${count(resisted, 'time')}`
@@ -143,7 +151,7 @@
     <div class="tip" class:align-right={tip.alignRight} style:left="{tip.left}px" style:top="{tip.top}px">
       <p class="tip-date">{dateLabel(tip.day.day)}</p>
       {#each breakdown(tip.day) as line (line.id)}
-        <p><strong>{line.summary}</strong> <span>{line.name}</span></p>
+        <p><strong>{line.summary}{#if line.goalMet}{' '}✓{/if}</strong> <span>{line.name}</span></p>
       {:else}
         <p>Nothing logged</p>
       {/each}
@@ -179,7 +187,7 @@
       <li>
         <strong>{dateLabel(d.day)}:</strong>
         {breakdown(d)
-          .map((line) => `${line.name}: ${line.summary}`)
+          .map((line) => `${line.name}: ${line.summary}${line.goalMet ? ' (goal met)' : ''}`)
           .join(' · ')}
       </li>
     {:else}

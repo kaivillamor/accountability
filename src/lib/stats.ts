@@ -13,10 +13,9 @@ function doneDays(entries: Entry[]): number[] {
   return [...new Set(entries.filter((e) => e.kind === 'done').map((e) => dayOf(e.at)))].toSorted((a, b) => a - b)
 }
 
-// Days in a row with something done. Today counts once done, and until then
-// the streak carries over from yesterday.
-export function habitStreak(entries: Entry[], now: number): number {
-  const days = new Set(doneDays(entries))
+// Days in a row from the given set, ending today. Today counts once it's in the set, and
+// until then the streak carries over from yesterday.
+function streakOf(days: Set<number>, now: number): number {
   const today = dayOf(now)
   let current = days.has(today) ? today : today - 1
   let streak = 0
@@ -25,6 +24,21 @@ export function habitStreak(entries: Entry[], now: number): number {
     current -= 1
   }
   return streak
+}
+
+// Days in a row with something done.
+export function habitStreak(entries: Entry[], now: number): number {
+  return streakOf(new Set(doneDays(entries)), now)
+}
+
+// Days in a row on which the amounts used reached the daily goal.
+export function goalStreak(goal: number, entries: Entry[], now: number): number {
+  const byDay = Map.groupBy(
+    entries.filter((e) => e.kind === 'used'),
+    (e) => dayOf(e.at),
+  )
+  const metDays = [...byDay].filter(([, dayEntries]) => usedTotal(dayEntries) >= goal).map(([day]) => day)
+  return streakOf(new Set(metDays), now)
 }
 
 // The longest run of days in a row with something done, at any time.

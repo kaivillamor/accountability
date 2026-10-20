@@ -3,7 +3,12 @@ export type Tracker = {
   id: string
   name: string
   createdAt: number
-} & ({ kind: 'habit' } | { kind: 'usage'; unit: string } | { kind: 'quit' })
+} & (
+  | { kind: 'habit' }
+  // `dailyGoal` is optional: reach at least this much each day, in `unit`.
+  | { kind: 'usage'; unit: string; dailyGoal?: number }
+  | { kind: 'quit' }
+)
 
 export type TrackerKind = Tracker['kind']
 

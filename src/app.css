@@ -12,6 +12,8 @@
   --accent-ink: #ffffff;
   --tint: rgba(42, 120, 214, 0.1);
   --critical: #d03b3b;
+  --good: #0ca30c;
+  --good-ink: #006300;
   --empty: #e1e0d9;
   --heat-1: #86b6ef;
   --heat-2: #3987e5;
@@ -29,6 +31,7 @@
     --border: rgba(255, 255, 255, 0.1);
     --border-strong: rgba(255, 255, 255, 0.2);
     --tint: rgba(57, 135, 229, 0.18);
+    --good-ink: #0ca30c;
     --empty: #2c2c2a;
     --shadow: none;
   }
@@ -78,17 +81,22 @@ button.danger {
 
 /* Hover only where there's a pointer, so taps on phones don't leave buttons stuck highlighted. */
 @media (hover: hover) {
-  button:not(.primary, .danger):hover {
+  button:not(.primary, .danger, :disabled):hover {
     background: var(--tint);
   }
 
-  button:is(.primary, .danger):hover {
+  button:is(.primary, .danger):not(:disabled):hover {
     filter: brightness(0.92);
   }
 }
 
-button:active {
+button:not(:disabled):active {
   transform: translateY(1px);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 input:not([type='checkbox'], [type='radio']) {

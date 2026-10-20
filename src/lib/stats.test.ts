@@ -7,6 +7,7 @@ import {
   dailyAverage,
   daysWithout,
   doneCount,
+  goalStreak,
   habitStreak,
   longestStretch,
   resistedCount,
@@ -126,6 +127,20 @@ inEachTimeZone(() => {
   test('longest stretch is the longest gap between start, slips and now', () => {
     const entries = [slipped(time(5, 12)), slipped(time(15, 12))]
     assert.equal(longestStretch(quitTracker(), entries, time(20, 12)), 10)
+  })
+
+  test('goal streak counts days in a row that reached the goal, adding up each day', () => {
+    const entries = [used(time(11, 9), 64), used(time(12, 9), 40), used(time(12, 15), 30), used(time(13, 9), 64)]
+    assert.equal(goalStreak(64, entries, time(13, 20)), 3)
+  })
+
+  test('goal streak breaks on a day under the goal', () => {
+    const entries = [used(time(11, 9), 64), used(time(12, 9), 50), used(time(13, 9), 64)]
+    assert.equal(goalStreak(64, entries, time(13, 20)), 1)
+  })
+
+  test('goal streak carries over from yesterday until today reaches the goal', () => {
+    assert.equal(goalStreak(64, [used(time(12, 9), 64), used(time(13, 9), 10)], time(13, 20)), 1)
   })
 
   test('longest stretch without slips runs from tracking start to now', () => {

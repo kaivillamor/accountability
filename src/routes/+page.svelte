@@ -8,6 +8,7 @@
     dailyAverage,
     daysWithout,
     doneCount,
+    goalStreak,
     habitStreak,
     longestStretch,
     resistedCount,
@@ -27,10 +28,14 @@
   let entries = $state<Entry[]>([])
   let now = $state(Date.now())
   let confirmDialog: ReturnType<typeof ConfirmDialog>
+  // The new-tracker form: open while there are no trackers, so the first step is obvious, and
+  // closed after adding one, so the new card is in view.
+  let formOpen = $state(false)
 
   const loading = Promise.all([listTrackers(), listEntries()]).then(([savedTrackers, savedEntries]) => {
     trackers = savedTrackers.toSorted((a, b) => a.createdAt - b.createdAt)
     entries = savedEntries
+    formOpen = trackers.length === 0
   })
 
   // Keeps "today" and day counts current while the page stays open.
@@ -42,11 +47,17 @@
   let name = $state('')
   let kind = $state<TrackerKind>('habit')
   let unit = $state('')
+  let goal = $state<number | null>(null)
+  // "64 ounces" in the unit field means the amount belongs in the daily goal.
+  const unitHasNumber = $derived(kind === 'usage' && /\d/.test(unit))
 
   async function addTracker(event: SubmitEvent) {
     event.preventDefault()
     const base = { id: crypto.randomUUID(), name: name.trim(), createdAt: Date.now() }
-    const tracker: Tracker = kind === 'usage' ? { ...base, kind, unit: unit.trim() } : { ...base, kind }
+    const tracker: Tracker =
+      kind === 'usage'
+        ? { ...base, kind, unit: unit.trim(), ...(goal ? { dailyGoal: goal } : {}) }
+        : { ...base, kind }
     await saveTracker(tracker)
     trackers.push(tracker)
     // Without this, `now` (refreshed every minute) can be older than the new tracker, and a
@@ -54,6 +65,8 @@
     now = Date.now()
     name = ''
     unit = ''
+    goal = null
+    formOpen = false
   }
 
   function moment(tracker: Tracker) {
@@ -95,6 +108,7 @@
     await deleteTracker(tracker.id)
     trackers = trackers.filter((t) => t.id !== tracker.id)
     entries = entries.filter((e) => e.trackerId !== tracker.id)
+    if (trackers.length === 0) formOpen = true
   }
 
   function kindLabel(tracker: Tracker): string {
@@ -146,8 +160,29 @@
           </div>
         {:else if tracker.kind === 'usage'}
           {@const today = usedToday(trackerEntries, now)}
-          <p class="stat"><strong>{formatAmount(today)}</strong> {unitFor(today, tracker.unit)} today</p>
+          {#if tracker.dailyGoal}
+            {@const goal = tracker.dailyGoal}
+            <p class="stat">
+              <strong>{formatAmount(today)}</strong> / {formatQuantity(goal, tracker.unit)} today
+              {#if today >= goal}<span class="goal-met">✓ Goal met</span>{/if}
+            </p>
+            <div
+              class="meter"
+              role="progressbar"
+              aria-label="Today toward the daily goal"
+              aria-valuemin={0}
+              aria-valuemax={goal}
+              aria-valuenow={today}
+            >
+              <div class:reached={today >= goal} style:--progress="{Math.min(today / goal, 1) * 100}%"></div>
+            </div>
+          {:else}
+            <p class="stat"><strong>{formatAmount(today)}</strong> {unitFor(today, tracker.unit)} today</p>
+          {/if}
           <dl class="stats">
+            {#if tracker.dailyGoal}
+              <div><dt>Goal streak</dt><dd>{count(goalStreak(tracker.dailyGoal, trackerEntries, now), 'day')}</dd></div>
+            {/if}
             <div><dt>Total</dt><dd>{formatQuantity(usedTotal(trackerEntries), tracker.unit)}</dd></div>
             <div>
               <dt>Daily average</dt>
@@ -186,8 +221,7 @@
       </section>
     {/each}
 
-    <!-- Starts open when there are no trackers yet, so the first step is obvious. -->
-    <details class="card new-tracker" open={trackers.length === 0}>
+    <details class="card new-tracker" bind:open={formOpen}>
       <summary>New tracker</summary>
       <form onsubmit={addTracker}>
         <label class="field">
@@ -207,12 +241,27 @@
           </div>
         </fieldset>
         {#if kind === 'usage'}
-          <label class="field">
-            <span>Unit</span>
-            <input bind:value={unit} required placeholder="cups, minutes, dollars" />
-          </label>
+          <div class="pair">
+            <label class="field">
+              <span>Unit</span>
+              <input
+                bind:value={unit}
+                required
+                placeholder="ounces, cups, minutes"
+                aria-invalid={unitHasNumber}
+                aria-describedby={unitHasNumber ? 'unit-error' : undefined}
+              />
+              {#if unitHasNumber}
+                <small id="unit-error" class="error">Just the word, like ounces. Amounts go in Daily goal.</small>
+              {/if}
+            </label>
+            <label class="field">
+              <span>Daily goal <small>optional</small></span>
+              <input bind:value={goal} type="number" inputmode="decimal" min="0" step="any" placeholder="e.g. 64" />
+            </label>
+          </div>
         {/if}
-        <button class="primary">Add tracker</button>
+        <button class="primary" disabled={unitHasNumber}>Add tracker</button>
       </form>
     </details>
   {:catch error}
@@ -333,6 +382,59 @@
     margin-top: 0.85rem;
   }
 
+  .goal-met {
+    margin-left: 0.5rem;
+    color: var(--good-ink);
+    font-size: 0.85rem;
+    font-weight: 600;
+    transition: opacity 0.3s ease 0.8s;
+  }
+
+  /* A meter: the accent fill on a lighter track of the same blue. The fill slides to today's
+     progress, and once the goal is reached it turns green as it arrives at the end. */
+  .meter {
+    max-width: 20rem;
+    height: 0.5rem;
+    margin-top: 0.6rem;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--tint);
+  }
+
+  .meter > div {
+    width: var(--progress);
+    height: 100%;
+    border-radius: inherit;
+    background: var(--accent);
+    transition:
+      width 0.8s ease-out,
+      background-color 0.3s ease 0.8s;
+  }
+
+  .meter > .reached {
+    background: var(--good);
+  }
+
+  /* Where a new bar and "Goal met" label start, so they fill up and fade in on arrival. */
+  @starting-style {
+    .meter > div,
+    .meter > .reached {
+      width: 0;
+      background-color: var(--accent);
+    }
+
+    .goal-met {
+      opacity: 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .meter > div,
+    .goal-met {
+      transition: none;
+    }
+  }
+
   .amount {
     display: inline-flex;
     align-items: center;
@@ -402,6 +504,25 @@
     font-weight: 600;
   }
 
+  .field > span small {
+    font-weight: normal;
+    color: var(--ink-muted);
+  }
+
+  /* The text stays in the ink color for contrast; the red icon marks it as a problem. */
+  .field .error::before {
+    content: '⚠ ';
+    color: var(--critical);
+  }
+
+  /* Top-aligned, so a message under one field doesn't stretch the other. */
+  .pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+    gap: 0.75rem;
+  }
+
   .type {
     margin: 0;
     padding: 0;
@@ -455,7 +576,8 @@
   }
 
   @media (max-width: 30rem) {
-    .kinds {
+    .kinds,
+    .pair {
       grid-template-columns: 1fr;
     }
   }
