@@ -1,6 +1,7 @@
 <script lang="ts">
   import ActivityGrid from '#lib/ActivityGrid.svelte'
   import ConfirmDialog from '#lib/ConfirmDialog.svelte'
+  import ThemePicker from '#lib/ThemePicker.svelte'
   import { deleteTracker, listEntries, listTrackers, saveEntry, saveTracker } from '#lib/db.ts'
   import type { Entry, Tracker, TrackerKind } from '#lib/model.ts'
   import {
@@ -121,7 +122,10 @@
 </svelte:head>
 
 <main>
-  <h1>Accountability</h1>
+  <div class="top">
+    <h1>Accountability</h1>
+    <ThemePicker />
+  </div>
 
   {#await loading then}
     {#if trackers.length > 0}
@@ -278,8 +282,17 @@
     padding: 1.25rem 1rem 3rem;
   }
 
-  h1 {
+  .top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
     margin: 0.5rem 0 1rem;
+  }
+
+  h1 {
+    margin: 0;
     font-size: 1.9rem;
     letter-spacing: -0.01em;
   }
@@ -390,7 +403,7 @@
     transition: opacity 0.3s ease 0.8s;
   }
 
-  /* A meter: the accent fill on a lighter track of the same blue. The fill slides to today's
+  /* A meter: the accent fill on a lighter tint of the accent. The fill slides to today's
      progress, and once the goal is reached it turns green as it arrives at the end. */
   .meter {
     max-width: 20rem;

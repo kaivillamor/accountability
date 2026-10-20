@@ -1,5 +1,36 @@
-/* Chart colors come from the dataviz reference palette. Busier days are darker, from light to
-   dark blue, in both light and dark mode; the three steps are validated against both surfaces. */
+/* Color themes, picked in ThemePicker.svelte. Each sets the grid's three shades and the accent.
+   The shades take a reference-palette hue at the lightness levels of its validated blue ramp, darker
+   for busier days in both modes, and are validated against both surfaces. The accent is the lightest
+   of its hue that keeps white button text at 4.5:1. Slip days use ink in every theme. */
+:root,
+[data-theme='orange'] {
+  --accent: #cd4800;
+  --heat-1: #ff9067;
+  --heat-2: #da5822;
+  --heat-3: #9f3600;
+}
+
+[data-theme='blue'] {
+  --accent: #256abf;
+  --heat-1: #86b6ef;
+  --heat-2: #3987e5;
+  --heat-3: #1c5cab;
+}
+
+[data-theme='purple'] {
+  --accent: #6a5ae6;
+  --heat-1: #a8a7ff;
+  --heat-2: #7c73eb;
+  --heat-3: #5647bb;
+}
+
+[data-theme='pink'] {
+  --accent: #d2367e;
+  --heat-1: #ff84b3;
+  --heat-2: #d45087;
+  --heat-3: #aa2664;
+}
+
 :root {
   --page: #f9f9f7;
   --surface: #fcfcfb;
@@ -8,16 +39,12 @@
   --ink-muted: #898781;
   --border: rgba(11, 11, 11, 0.1);
   --border-strong: rgba(11, 11, 11, 0.2);
-  --accent: #2a78d6;
   --accent-ink: #ffffff;
-  --tint: rgba(42, 120, 214, 0.1);
+  --tint: color-mix(in srgb, var(--accent) 10%, transparent);
   --critical: #d03b3b;
   --good: #0ca30c;
   --good-ink: #006300;
   --empty: #e1e0d9;
-  --heat-1: #86b6ef;
-  --heat-2: #3987e5;
-  --heat-3: #1c5cab;
   --radius: 0.625rem;
   --shadow: 0 1px 3px rgba(11, 11, 11, 0.06);
 }
@@ -30,7 +57,7 @@
     --ink-secondary: #c3c2b7;
     --border: rgba(255, 255, 255, 0.1);
     --border-strong: rgba(255, 255, 255, 0.2);
-    --tint: rgba(57, 135, 229, 0.18);
+    --tint: color-mix(in srgb, var(--accent) 20%, transparent);
     --good-ink: #0ca30c;
     --empty: #2c2c2a;
     --shadow: none;
@@ -43,6 +70,8 @@ body {
   color: var(--ink);
   /* Figtree ships with the app (see +layout.ts); sans-serif only shows while it loads. */
   font-family: 'Figtree Variable', sans-serif;
+  /* The browser's own checkboxes and radios take the app's accent instead of their default blue. */
+  accent-color: var(--accent);
 }
 
 button,

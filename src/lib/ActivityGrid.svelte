@@ -270,8 +270,9 @@
     fill: var(--heat-3);
   }
 
+  /* Ink, not red: red sits too close to the orange shades to tell apart at a glance. */
   .slipped {
-    fill: var(--critical);
+    fill: var(--ink);
   }
 
   .today {
