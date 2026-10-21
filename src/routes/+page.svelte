@@ -15,13 +15,14 @@
   } from '#lib/arrange.ts'
   import ChoiceDialog from '#lib/ChoiceDialog.svelte'
   import ConfirmDialog from '#lib/ConfirmDialog.svelte'
-  import { apply, listEntries, listGroups, listTrackers, saveEntry, saveGroup, saveTracker } from '#lib/db.ts'
+  import { apply, listEntries, listGroups, listTrackers, replaceAll, saveEntry, saveGroup, saveTracker } from '#lib/db.ts'
   import { Drag } from '#lib/drag.svelte.ts'
   import GroupBox from '#lib/GroupBox.svelte'
   import type { MenuItem } from '#lib/Menu.svelte'
-  import type { Change, Entry, Group, Tracker } from '#lib/model.ts'
+  import type { Change, Entry, Group, Snapshot, Tracker } from '#lib/model.ts'
   import ThemePicker from '#lib/ThemePicker.svelte'
   import TrackerCard, { type Mark } from '#lib/TrackerCard.svelte'
+  import Transfer from '#lib/Transfer.svelte'
   import { count } from '#lib/text.ts'
 
   // The kinds the form creates. A staged habit comes from dragging habits together.
@@ -70,7 +71,8 @@
 
   async function addTracker(event: SubmitEvent) {
     event.preventDefault()
-    const base = { id: crypto.randomUUID(), name: name.trim(), createdAt: Date.now(), order: nextOrder(trackers, groups) }
+    const at = Date.now()
+    const base = { id: crypto.randomUUID(), name: name.trim(), createdAt: at, updatedAt: at, order: nextOrder(trackers, groups) }
     const tracker: Tracker =
       kind === 'usage'
         ? { ...base, kind, unit: unit.trim(), ...(goal ? { dailyGoal: goal } : {}) }
@@ -124,9 +126,9 @@
     const tracker = trackers.find((t) => t.id === id)
     if (newName === undefined || newName === (group ?? tracker)?.name) return
     if (group) {
-      await updateGroup({ ...$state.snapshot(group), name: newName })
+      await updateGroup({ ...$state.snapshot(group), name: newName, updatedAt: Date.now() })
     } else if (tracker) {
-      const renamed = { ...$state.snapshot(tracker), name: newName }
+      const renamed = { ...$state.snapshot(tracker), name: newName, updatedAt: Date.now() }
       await saveTracker(renamed)
       trackers = trackers.map((t) => (t.id === id ? renamed : t))
     }
@@ -138,7 +140,22 @@
   }
 
   function toggle(group: Group) {
-    return updateGroup({ ...$state.snapshot(group), collapsed: !group.collapsed })
+    return updateGroup({ ...$state.snapshot(group), collapsed: !group.collapsed, updatedAt: Date.now() })
+  }
+
+  // Everything on this device, for exporting.
+  function current(): Snapshot {
+    return $state.snapshot({ trackers, groups, entries })
+  }
+
+  // An import replaces what's here with the merged result the user reviewed.
+  async function importData(next: Snapshot) {
+    await replaceAll(next)
+    trackers = next.trackers
+    groups = next.groups
+    entries = next.entries
+    now = Date.now()
+    formOpen = trackers.length === 0
   }
 
   async function removeTracker(tracker: Tracker) {
@@ -386,6 +403,8 @@
         <button class="primary" disabled={unitHasNumber}>Add tracker</button>
       </form>
     </details>
+
+    <Transfer {current} onimport={importData} empty={trackers.length === 0} />
   {:catch error}
     <p role="alert">Couldn't open your saved data: {error.message}</p>
   {/await}
@@ -490,28 +509,11 @@
     margin-top: 0.75rem;
   }
 
-  .field {
-    display: grid;
-    gap: 0.35rem;
-  }
-
-  .field > span,
   .type legend {
     padding: 0;
     color: var(--ink-secondary);
     font-size: 0.85rem;
     font-weight: 600;
-  }
-
-  .field > span small {
-    font-weight: normal;
-    color: var(--ink-muted);
-  }
-
-  /* The text stays in the ink color for contrast; the red icon marks it as a problem. */
-  .field .error::before {
-    content: '⚠ ';
-    color: var(--critical);
   }
 
   /* Top-aligned, so a message under one field doesn't stretch the other. */

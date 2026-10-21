@@ -3,6 +3,8 @@ export type Tracker = {
   id: string
   name: string
   createdAt: number
+  // When it last changed, so merging another device's data keeps the newer version.
+  updatedAt: number
   // Position among its siblings: the top level, its group, or its staged habit's stages.
   order: number
   // Set when the tracker is in a group.
@@ -25,6 +27,7 @@ export type Group = {
   id: string
   name: string
   createdAt: number
+  updatedAt: number
   order: number
   collapsed: boolean
 }
@@ -44,3 +47,6 @@ export type Change = {
   putGroups: Group[]
   deleteGroupIds: string[]
 }
+
+// Everything on a device, as moved to another one.
+export type Snapshot = { trackers: Tracker[]; groups: Group[]; entries: Entry[] }

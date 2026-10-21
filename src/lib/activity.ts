@@ -8,9 +8,8 @@ export type ActivityDay = {
   day: number
   // Everything logged that day.
   entries: Entry[]
-  // Each done, resisted or usage log counts once. A slip adds no activity; it flags the day.
+  // Each done, resisted or usage log counts once. A slip adds no activity.
   count: number
-  slipped: boolean
   // 0 for nothing, then shades 1 to 3, darker with more activity (see `activity`).
   level: 0 | 1 | 2 | 3
 }
@@ -31,7 +30,6 @@ export function activity(entries: Entry[], now: number, weeks: number): Activity
     day,
     entries: dayEntries,
     count: dayEntries.filter((e) => e.kind !== 'slipped').length,
-    slipped: dayEntries.some((e) => e.kind === 'slipped'),
   }))
   // Shades are relative to the busiest day, but the scale never shrinks below one entry per
   // shade. Otherwise a new user's only entry would already be the darkest shade, and logging
@@ -52,8 +50,9 @@ function level(count: number, scale: number): ActivityDay['level'] {
   return Math.ceil((count / scale) * SHADES) as 1 | 2 | 3
 }
 
-// One card's part of a day, like "Done" for Run or "144 / 64 ounces" for Water.
-export type DayLine = { id: string; name: string; summary: string; goalMet: boolean }
+// One card's part of a day, like "Done" for Run or "144 / 64 ounces" for Water. A quit tracker
+// that slipped that day is `slipped`, even if it was also resisted.
+export type DayLine = { id: string; name: string; summary: string; goalMet: boolean; slipped: boolean }
 
 // What each card logged on a day, in card order. A staged habit sums up its stages ("2 of 3
 // stages", or "Done" once all are), except what a stage logged before the day it joined, which
@@ -64,7 +63,7 @@ export function dayLines(cards: Card[], dayEntries: Entry[], day: number): DayLi
     const joined = stages.filter((stage) => dayOf(stage.parent!.since) <= day)
     const done = joined.filter((stage) => dayEntries.some((e) => e.trackerId === stage.id)).length
     const summary = done === joined.length ? 'Done' : `${done} of ${joined.length} stages`
-    const own = done > 0 ? [{ id: tracker.id, name: tracker.name, summary, goalMet: false }] : []
+    const own = done > 0 ? [{ id: tracker.id, name: tracker.name, summary, goalMet: false, slipped: false }] : []
     return [...own, ...stages.filter((stage) => !joined.includes(stage)).flatMap((stage) => lineFor(stage, dayEntries))]
   })
 }
@@ -73,7 +72,8 @@ function lineFor(tracker: Tracker, dayEntries: Entry[]): DayLine[] {
   const logged = dayEntries.filter((e) => e.trackerId === tracker.id)
   if (logged.length === 0) return []
   const goalMet = tracker.kind === 'usage' && tracker.dailyGoal !== undefined && usedTotal(logged) >= tracker.dailyGoal
-  return [{ id: tracker.id, name: tracker.name, summary: summarize(tracker, logged), goalMet }]
+  const slipped = logged.some((e) => e.kind === 'slipped')
+  return [{ id: tracker.id, name: tracker.name, summary: summarize(tracker, logged), goalMet, slipped }]
 }
 
 // A habit, usage or quit tracker's day in words. Staged habits have no entries of their own.

@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { after, arrange, dissolve, move, nextOrder, remove, withChange, type Card, type Destination } from './arrange.ts'
+import { after, arrange, dissolve, move, nextOrder, remove, tidy, withChange, type Card, type Destination } from './arrange.ts'
 import type { Change, Group, Tracker } from './model.ts'
 
 const EARLIER = 1_000
@@ -9,10 +9,10 @@ const NOW = 2_000
 
 type Place = { groupId?: string; parent?: { id: string; since: number } }
 
-const habit = (id: string, order: number, place: Place = {}): Tracker => ({ id, name: id, createdAt: 0, order, kind: 'habit', ...place })
-const water = (order: number, place: Place = {}): Tracker => ({ id: 'water', name: 'water', createdAt: 0, order, kind: 'usage', unit: 'ounces', ...place })
-const staged = (id: string, order: number, place: Place = {}): Tracker => ({ id, name: id, createdAt: 0, order, kind: 'staged', ...place })
-const group = (id: string, order: number): Group => ({ id, name: id, createdAt: 0, order, collapsed: false })
+const habit = (id: string, order: number, place: Place = {}): Tracker => ({ id, name: id, createdAt: 0, updatedAt: 0, order, kind: 'habit', ...place })
+const water = (order: number, place: Place = {}): Tracker => ({ id: 'water', name: 'water', createdAt: 0, updatedAt: 0, order, kind: 'usage', unit: 'ounces', ...place })
+const staged = (id: string, order: number, place: Place = {}): Tracker => ({ id, name: id, createdAt: 0, updatedAt: 0, order, kind: 'staged', ...place })
+const group = (id: string, order: number): Group => ({ id, name: id, createdAt: 0, updatedAt: 0, order, collapsed: false })
 const stageOf = (parent: string): Place => ({ parent: { id: parent, since: EARLIER } })
 
 type State = { trackers: Tracker[]; groups: Group[] }
@@ -223,4 +223,33 @@ test('a new tracker goes last at the top level', () => {
   const trackers = [habit('read', 0), habit('run', 0, { groupId: 'morning' }), staged('workout', 2), habit('squats', 0, stageOf('workout'))]
   assert.equal(nextOrder(trackers, [group('morning', 1)]), 3)
   assert.equal(nextOrder([], []), 0)
+})
+
+test('tidying moves a card whose group is gone to the top level, and a stage whose habit is gone out on its own', () => {
+  const trackers = [habit('run', 0, { groupId: 'gone' }), habit('squats', 0, stageOf('gone too')), habit('read', 1)]
+  const result = tidy(trackers, [], NOW)
+  assert.equal(shape(result), 'run squats read')
+  const squats = result.trackers.find((t) => t.id === 'squats')!
+  assert.deepEqual([squats.parent, squats.updatedAt], [undefined, NOW])
+  assertNumbered(result)
+})
+
+test('tidying deletes groups and multi-stage habits left empty', () => {
+  const result = tidy([staged('workout', 1), habit('read', 2)], [group('morning', 0)], NOW)
+  assert.equal(shape(result), 'read')
+  assert.deepEqual([result.trackers.map((t) => t.id), result.groups], [['read'], []])
+})
+
+test('tidying puts the older of two cards with the same position first', () => {
+  const older = { ...habit('run', 0), createdAt: 1 }
+  const newer = { ...habit('read', 0), createdAt: 2 }
+  const result = tidy([newer, older], [], NOW)
+  assert.equal(shape(result), 'run read')
+  assertNumbered(result)
+})
+
+test('tidying leaves a consistent arrangement as it is', () => {
+  const trackers = [habit('run', 0, { groupId: 'morning' }), staged('workout', 1), habit('squats', 0, stageOf('workout'))]
+  const result = tidy(trackers, [group('morning', 0)], NOW)
+  assert.deepEqual(result, { trackers, groups: [group('morning', 0)] })
 })

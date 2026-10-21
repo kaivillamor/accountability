@@ -1,4 +1,4 @@
-import type { Change, Entry, Group, Tracker } from './model.ts'
+import type { Change, Entry, Group, Snapshot, Tracker } from './model.ts'
 
 type Stores = { trackers: Tracker; entries: Entry; groups: Group }
 
@@ -6,21 +6,35 @@ let opening: Promise<IDBDatabase> | undefined
 
 function open(): Promise<IDBDatabase> {
   opening ??= new Promise((resolve, reject) => {
-    const request = indexedDB.open('accountability', 2)
+    const request = indexedDB.open('accountability', 3)
     request.onupgradeneeded = (event) => {
       const db = request.result
-      if (event.oldVersion < 1) {
+      const from = event.oldVersion
+      if (from < 1) {
         db.createObjectStore('trackers', { keyPath: 'id' })
         db.createObjectStore('entries', { keyPath: 'id' })
       }
-      if (event.oldVersion < 2) {
-        db.createObjectStore('groups', { keyPath: 'id' })
-        // Trackers saved before groups existed get the order the page showed them in: oldest first.
-        const trackers = request.transaction!.objectStore('trackers')
-        const saved = trackers.getAll()
-        saved.onsuccess = () => {
-          const oldestFirst = (saved.result as Tracker[]).toSorted((a, b) => a.createdAt - b.createdAt)
-          for (const [order, tracker] of oldestFirst.entries()) trackers.put({ ...tracker, order })
+      if (from < 2) db.createObjectStore('groups', { keyPath: 'id' })
+      // Records saved by older versions get the fields added since, in one pass so the steps
+      // can't overwrite each other: an order (version 2), oldest first as the page used to show
+      // them, and when they last changed (version 3), for which their creation is the best known.
+      const transaction = request.transaction!
+      const trackers = transaction.objectStore('trackers')
+      const savedTrackers = trackers.getAll()
+      savedTrackers.onsuccess = () => {
+        const oldestFirst = (savedTrackers.result as Tracker[]).toSorted((a, b) => a.createdAt - b.createdAt)
+        for (const [order, tracker] of oldestFirst.entries()) {
+          const upgraded = { ...tracker }
+          if (from < 2) upgraded.order = order
+          if (from < 3) upgraded.updatedAt = tracker.createdAt
+          trackers.put(upgraded)
+        }
+      }
+      if (from < 3) {
+        const groups = transaction.objectStore('groups')
+        const savedGroups = groups.getAll()
+        savedGroups.onsuccess = () => {
+          for (const group of savedGroups.result as Group[]) groups.put({ ...group, updatedAt: group.createdAt })
         }
       }
     }
@@ -79,6 +93,21 @@ export async function apply(change: Change): Promise<void> {
         if (change.deleteTrackerIds.includes((cursor.value as Entry).trackerId)) cursor.delete()
         cursor.continue()
       }
+    }
+    transaction.oncomplete = () => resolve()
+    transaction.onerror = () => reject(transaction.error)
+  })
+}
+
+// Swaps everything on this device for `snapshot`, together or not at all.
+export async function replaceAll(snapshot: Snapshot): Promise<void> {
+  const db = await open()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(['trackers', 'entries', 'groups'], 'readwrite')
+    for (const store of ['trackers', 'entries', 'groups'] as const) {
+      const records = transaction.objectStore(store)
+      records.clear()
+      for (const record of snapshot[store]) records.put(record)
     }
     transaction.oncomplete = () => resolve()
     transaction.onerror = () => reject(transaction.error)

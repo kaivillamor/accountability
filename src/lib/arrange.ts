@@ -23,9 +23,11 @@ export type Moved = {
   created?: string
 }
 
-type Ordered = { id: string; order: number }
+type Ordered = { order: number; createdAt: number }
 
-const byOrder = (a: Ordered, b: Ordered) => a.order - b.order
+// By position. Two records only share a position after merging two devices' data, and then the
+// older one comes first.
+const byOrder = (a: Ordered, b: Ordered) => a.order - b.order || a.createdAt - b.createdAt
 
 export function arrange(trackers: Tracker[], groups: Group[]): Item[] {
   const cardOf = (tracker: Tracker): Card => ({
@@ -71,8 +73,8 @@ function listsOf(trackers: Tracker[], groups: Group[]): Lists {
   for (const group of groups) lists.set(group.id, [])
   for (const tracker of trackers) if (tracker.kind === 'staged') lists.set(tracker.id, [])
   const placed = [
-    ...groups.map((g) => ({ id: g.id, order: g.order, list: TOP })),
-    ...trackers.map((t) => ({ id: t.id, order: t.order, list: t.parent?.id ?? t.groupId ?? TOP })),
+    ...groups.map((g) => ({ id: g.id, order: g.order, createdAt: g.createdAt, list: TOP })),
+    ...trackers.map((t) => ({ id: t.id, order: t.order, createdAt: t.createdAt, list: t.parent?.id ?? t.groupId ?? TOP })),
   ]
   for (const { id, list } of placed.toSorted(byOrder)) lists.get(list)!.push(id)
   return lists
@@ -107,7 +109,7 @@ export function move(trackers: Tracker[], groups: Group[], id: string, to: Desti
   } else if (to.type === 'beside') {
     const holder = holderOf(lists, to.id)
     if (holder === TOP) {
-      const group: Group = { id: crypto.randomUUID(), name: 'New group', createdAt: now, order: 0, collapsed: false }
+      const group: Group = { id: crypto.randomUUID(), name: 'New group', createdAt: now, updatedAt: now, order: 0, collapsed: false }
       replace(lists, to.id, group.id)
       lists.set(group.id, to.after ? [to.id, id] : [id, to.id])
       added.groups.push(group)
@@ -125,6 +127,7 @@ export function move(trackers: Tracker[], groups: Group[], id: string, to: Desti
         id: crypto.randomUUID(),
         name: `${target.name} + ${moving.name}`,
         createdAt: now,
+        updatedAt: now,
         order: 0,
         kind: 'staged',
       }
@@ -162,6 +165,29 @@ export function after(trackers: Tracker[], groups: Group[], id: string): Destina
   return holder === TOP ? { type: 'list', index } : { type: 'list', groupId: holder, index }
 }
 
+// Makes an arrangement consistent after combining two devices' data, where each record is the
+// newer of its two versions: a card whose group is gone goes to the top level, a stage whose
+// multi-stage habit is gone becomes a habit of its own, empty groups and multi-stage habits are
+// deleted, and every list is numbered again.
+export function tidy(trackers: Tracker[], groups: Group[], now: number): { trackers: Tracker[]; groups: Group[] } {
+  const groupIds = new Set(groups.map((g) => g.id))
+  const stagedIds = new Set(trackers.filter((t) => t.kind === 'staged').map((t) => t.id))
+  const fixed = trackers.map((tracker) => {
+    const stage = tracker.kind === 'habit' && tracker.parent !== undefined && stagedIds.has(tracker.parent.id)
+    const grouped = !stage && tracker.groupId !== undefined && groupIds.has(tracker.groupId)
+    if (stage === (tracker.parent !== undefined) && grouped === (tracker.groupId !== undefined)) return tracker
+    const next: Tracker = { ...tracker, updatedAt: now }
+    if (!stage) delete next.parent
+    if (!grouped) delete next.groupId
+    return next
+  })
+  const change = changes(fixed, groups, listsOf(fixed, groups), { trackers: [], groups: [] }, [], now)
+  return {
+    trackers: withChange(fixed, change.putTrackers, change.deleteTrackerIds),
+    groups: withChange(groups, change.putGroups, change.deleteGroupIds),
+  }
+}
+
 // A new tracker goes last at the top level.
 export function nextOrder(trackers: Tracker[], groups: Group[]): number {
   return listsOf(trackers, groups).get(TOP)!.length
@@ -187,7 +213,7 @@ function changes(trackers: Tracker[], groups: Group[], lists: Lists, added: Adde
       continue
     }
     const order = lists.get(TOP)!.indexOf(group.id)
-    if (order !== group.order || added.groups.includes(group)) change.putGroups.push({ ...group, order })
+    if (order !== group.order || added.groups.includes(group)) change.putGroups.push({ ...group, order, updatedAt: now })
   }
   for (const tracker of [...trackers, ...added.trackers]) {
     if (deleted.has(tracker.id)) {
@@ -202,7 +228,7 @@ function changes(trackers: Tracker[], groups: Group[], lists: Lists, added: Adde
     // A stage keeps the time it joined while it stays in the same staged habit.
     else if (holder !== TOP) placed.parent = { id: holder, since: tracker.parent?.id === holder ? tracker.parent.since : now }
     const moved = placed.order !== tracker.order || placed.groupId !== tracker.groupId || placed.parent?.id !== tracker.parent?.id
-    if (moved || added.trackers.includes(tracker)) change.putTrackers.push(placed)
+    if (moved || added.trackers.includes(tracker)) change.putTrackers.push({ ...placed, updatedAt: now })
   }
   return change
 }

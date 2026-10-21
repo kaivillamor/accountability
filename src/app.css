@@ -316,3 +316,43 @@ input::placeholder {
 .drop-into {
   background-image: linear-gradient(var(--tint), var(--tint));
 }
+
+/* Dialogs drawn by the app: confirmations, choices, export and import. Long ones scroll inside. */
+dialog {
+  box-sizing: border-box;
+  width: min(24rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
+}
+
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+/* A labelled form field: the label above, the input below. */
+.field {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.field > span {
+  color: var(--ink-secondary);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.field > span small {
+  font-weight: normal;
+  color: var(--ink-muted);
+}
+
+/* The text stays in the ink color for contrast; the red icon marks it as a problem. */
+.error::before {
+  content: '⚠ ';
+  color: var(--critical);
+}

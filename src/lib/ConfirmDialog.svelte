@@ -39,21 +39,6 @@
 </dialog>
 
 <style>
-  dialog {
-    box-sizing: border-box;
-    width: min(24rem, calc(100vw - 2rem));
-    padding: 1.25rem;
-    border: 1px solid var(--border);
-    border-radius: 1rem;
-    background: var(--surface);
-    color: var(--ink);
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
-  }
-
-  dialog::backdrop {
-    background: rgba(0, 0, 0, 0.45);
-  }
-
   h2 {
     margin: 0 0 0.4rem;
     font-size: 1.15rem;

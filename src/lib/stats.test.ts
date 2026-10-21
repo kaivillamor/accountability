@@ -36,16 +36,16 @@ const slipped = (at: number): Entry => ({ ...entry(at), kind: 'slipped' })
 const resisted = (at: number): Entry => ({ ...entry(at), kind: 'resisted' })
 
 function quitTracker(): Tracker {
-  return { id: 't', name: 'Smoking', createdAt: time(1, 12), order: 0, kind: 'quit' }
+  return { id: 't', name: 'Smoking', createdAt: time(1, 12), updatedAt: 0, order: 0, kind: 'quit' }
 }
 
 // A stage of the staged habit "workout" that joined at `since`.
 function stage(id: string, since: number): Tracker {
-  return { id, name: id, createdAt: time(1, 12), order: 0, kind: 'habit', parent: { id: 'workout', since } }
+  return { id, name: id, createdAt: time(1, 12), updatedAt: 0, order: 0, kind: 'habit', parent: { id: 'workout', since } }
 }
 
 function workout(): Tracker {
-  return { id: 'workout', name: 'Workout', createdAt: time(10, 8), order: 0, kind: 'staged' }
+  return { id: 'workout', name: 'Workout', createdAt: time(10, 8), updatedAt: 0, order: 0, kind: 'staged' }
 }
 
 inEachTimeZone(() => {
@@ -130,7 +130,7 @@ inEachTimeZone(() => {
   })
 
   test('daily average spreads the total over every day since tracking started, today included', () => {
-    const coffee: Tracker = { id: 't', name: 'Coffee', createdAt: time(1, 8), order: 0, kind: 'usage', unit: 'cups' }
+    const coffee: Tracker = { id: 't', name: 'Coffee', createdAt: time(1, 8), updatedAt: 0, order: 0, kind: 'usage', unit: 'cups' }
     assert.equal(dailyAverage(coffee, [used(time(3, 8), 6), used(time(12, 8), 6)], time(12, 20)), 1)
   })
 
@@ -191,7 +191,7 @@ inEachTimeZone(() => {
 
   test('done today means a habit done, every stage done, a goal reached or no slip', () => {
     const now = time(13, 20)
-    const run: Tracker = { id: 't', name: 'Run', createdAt: time(1, 8), order: 0, kind: 'habit' }
+    const run: Tracker = { id: 't', name: 'Run', createdAt: time(1, 8), updatedAt: 0, order: 0, kind: 'habit' }
     assert.equal(doneToday(run, [], [done(time(13, 8))], now), true)
     assert.equal(doneToday(run, [], [done(time(12, 8))], now), false)
 
@@ -199,10 +199,10 @@ inEachTimeZone(() => {
     assert.equal(doneToday(workout(), stages, [done(time(13, 7), 'run')], now), false)
     assert.equal(doneToday(workout(), stages, [done(time(13, 7), 'run'), done(time(13, 9), 'squats')], now), true)
 
-    const water: Tracker = { id: 't', name: 'Water', createdAt: time(1, 8), order: 0, kind: 'usage', unit: 'ounces', dailyGoal: 64 }
+    const water: Tracker = { id: 't', name: 'Water', createdAt: time(1, 8), updatedAt: 0, order: 0, kind: 'usage', unit: 'ounces', dailyGoal: 64 }
     assert.equal(doneToday(water, [], [used(time(13, 8), 40), used(time(12, 8), 40)], now), false)
     assert.equal(doneToday(water, [], [used(time(13, 8), 40), used(time(13, 12), 24)], now), true)
-    const coffee: Tracker = { id: 't', name: 'Coffee', createdAt: time(1, 8), order: 0, kind: 'usage', unit: 'cups' }
+    const coffee: Tracker = { id: 't', name: 'Coffee', createdAt: time(1, 8), updatedAt: 0, order: 0, kind: 'usage', unit: 'cups' }
     assert.equal(doneToday(coffee, [], [used(time(13, 8), 1)], now), true)
     assert.equal(doneToday(coffee, [], [], now), false)
 

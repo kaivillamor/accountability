@@ -10,6 +10,7 @@
   const WEEKS = 53
   const CELL = 13
   const PITCH = 15 // a cell plus the 2px gap
+  const GAP = 1 // between the two parts of a split day, narrower than the gap between days
   const LEFT = 30 // room for weekday labels
   const TOP = 18 // room for month labels
   const WEEKDAY_LABELS = [
@@ -52,9 +53,16 @@
     tip = { day, left, top: cellBox.top - wrapBox.top, alignRight: left > wrapBox.width / 2 }
   }
 
-  // What each shown card logged that day, in card order.
-  function breakdown(d: ActivityDay) {
-    return dayLines(shown, d.entries, d.day)
+  // What each shown card logged on each day, in card order. The pop-up lists these lines, and a
+  // day's square splits by them.
+  const linesOf = $derived(new Map(columns.flat().map((d) => [d.day, dayLines(shown, d.entries, d.day)])))
+  const breakdown = (d: ActivityDay) => linesOf.get(d.day)!
+
+  // How wide a split day's done share is, leaving the slipped share after a 1px gap. Each share is
+  // sized by its number of tasks, and neither gets thinner than 2px.
+  function doneWidth(done: number, tasks: number): number {
+    const room = CELL - GAP
+    return Math.min(Math.max(Math.round((room * done) / tasks), 2), room - 2)
   }
 
   function dateLabel(day: number): string {
@@ -102,10 +110,22 @@
         {#each column as d, row (d.day)}
           {@const x = LEFT + i * PITCH}
           {@const y = TOP + row * PITCH}
+          {@const lines = breakdown(d)}
+          {@const slips = lines.filter((line) => line.slipped).length}
+          {@const allSlipped = slips > 0 && slips === lines.length}
+          {@const split = slips > 0 && !allSlipped}
+          {#if split}
+            <!-- Some of the day's tasks slipped: the share done keeps the day's shade, and the
+                 share that slipped is ink, so a slip no longer hides what else was done. -->
+            {@const done = doneWidth(lines.length - slips, lines.length)}
+            <rect class="part level-{d.level}" {x} {y} width={done} height={CELL} rx="2" />
+            <rect class="part slipped" x={x + done + GAP} {y} width={CELL - done - GAP} height={CELL} rx="2" />
+          {/if}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <rect
             class="cell level-{d.level}"
-            class:slipped={d.slipped}
+            class:slipped={allSlipped}
+            class:split
             class:today={d.day === today}
             class:selected={d.day === tip?.day.day}
             {x}
@@ -119,7 +139,7 @@
               if (event.pointerType === 'mouse') tip = undefined
             }}
           />
-          {#if d.slipped}
+          {#if allSlipped}
             <path class="cross" d="M{x + 4} {y + 4}l5 5m0-5l-5 5" />
           {/if}
         {/each}
@@ -157,6 +177,14 @@
       <path class="cross" d="M4 4l5 5m0-5l-5 5" />
     </svg>
     <span>Slipped</span>
+    {#if shown.length > 1}
+      {@const done = doneWidth(1, 2)}
+      <svg width={CELL} height={CELL} aria-hidden="true">
+        <rect class="level-2" width={done} height={CELL} rx="2" />
+        <rect class="slipped" x={done + GAP} width={CELL - done - GAP} height={CELL} rx="2" />
+      </svg>
+      <span>Some slipped</span>
+    {/if}
   {/if}
 </div>
 
@@ -253,6 +281,16 @@
   /* Ink, not red: red sits too close to the orange shades to tell apart at a glance. */
   .slipped {
     fill: var(--ink);
+  }
+
+  /* A split day draws its two parts underneath; the day's own square stays on top, see-through,
+     to take the pointer and carry the today and selected outlines. */
+  .split {
+    fill: transparent;
+  }
+
+  .part {
+    pointer-events: none;
   }
 
   .today {
