@@ -48,5 +48,11 @@ export type Change = {
   deleteGroupIds: string[]
 }
 
-// Everything on a device, as moved to another one.
+// A set of trackers with their groups and everything logged for them.
 export type Snapshot = { trackers: Tracker[]; groups: Group[]; entries: Entry[] }
+
+// Everything on a device: what's shown, and the hidden trackers, which are kept encrypted and
+// never belong to a group.
+export type DeviceData = { shown: Snapshot; hidden: Snapshot }
+
+export const EMPTY: Snapshot = { trackers: [], groups: [], entries: [] }

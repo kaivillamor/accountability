@@ -1,18 +1,21 @@
 <script lang="ts">
   import { arrange, idsOf, type Card } from '#lib/arrange.ts'
-  import type { Snapshot } from '#lib/model.ts'
+  import type { DeviceData } from '#lib/model.ts'
   import { count } from '#lib/text.ts'
   import { lock, merge, originOf, unlock, without, type Origin } from '#lib/transfer.ts'
 
   type Props = {
-    // What's on this device now.
-    current: () => Snapshot
+    // Everything on this device now, hidden trackers included.
+    current: () => DeviceData
+    // Gets the hidden trackers ready first: unlocked, or a PIN set when an import brings
+    // hidden trackers to a device without any. Resolves to whether to go on.
+    ready: (incoming: boolean) => Promise<boolean>
     // Saves an import's result in place of everything on this device.
-    onimport: (snapshot: Snapshot) => Promise<void>
+    onimport: (data: DeviceData) => Promise<void>
     // Nothing to export yet.
     empty: boolean
   }
-  let { current, onimport, empty }: Props = $props()
+  let { current, ready, onimport, empty }: Props = $props()
 
   const MIN_LENGTH = 8
   const ORIGINS: Record<Origin, string> = { both: 'On both', file: 'From the file', here: 'Only here' }
@@ -28,8 +31,14 @@
   const mismatch = $derived(again !== '' && again !== passphrase)
   const canShare = $derived(file !== undefined && typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] }))
 
+  async function openExport() {
+    if (await ready(false)) exportDialog.showModal()
+  }
+
   async function createFile(event: SubmitEvent) {
     event.preventDefault()
+    // The hidden trackers lock when the app is left, say to fetch a passphrase, so check again.
+    if (!(await ready(false))) return
     working = true
     const text = await lock(current(), passphrase)
     working = false
@@ -70,7 +79,7 @@
   let error = $state<string>()
   // Raw state: the review never changes once made, and its records go straight into the database,
   // which can't store Svelte's reactive proxies.
-  let review = $state.raw<{ here: Snapshot; file: Snapshot; merged: Snapshot }>()
+  let review = $state.raw<{ here: DeviceData; file: DeviceData; merged: DeviceData }>()
   // Cards the user chose to delete while reviewing.
   let deleting = $state<string[]>([])
 
@@ -80,6 +89,10 @@
     error = undefined
     try {
       const fromFile = await unlock(await chosen!.text(), importPassphrase)
+      if (!(await ready(fromFile.hidden.trackers.length > 0))) {
+        error = 'Importing needs your hidden trackers unlocked, since the file is combined with them.'
+        return
+      }
       const here = current()
       review = { here, file: fromFile, merged: merge(here, fromFile, Date.now()) }
       importPassphrase = ''
@@ -91,17 +104,28 @@
     }
   }
 
-  // Each card of the combined data, in page order, with what's in it and where it came from.
+  // Each card of the combined data, shown ones in page order and then the hidden ones, with what's
+  // in it and where it came from.
   const rows = $derived.by(() => {
     if (!review) return []
     const { here, file: fromFile, merged } = review
-    const cards = arrange(merged.trackers, merged.groups).flatMap((item): { card: Card; group?: string }[] =>
-      item.type === 'group' ? item.cards.map((card) => ({ card, group: item.group.name })) : [{ card: item.card }],
+    const cards = (['shown', 'hidden'] as const).flatMap((side) =>
+      arrange(merged[side].trackers, merged[side].groups).flatMap((item): { card: Card; group?: string; hidden: boolean }[] =>
+        item.type === 'group'
+          ? item.cards.map((card) => ({ card, group: item.group.name, hidden: false }))
+          : [{ card: item.card, hidden: side === 'hidden' }],
+      ),
     )
-    return cards.map(({ card, group }) => {
+    return cards.map(({ card, group, hidden }) => {
       const ids = idsOf(card)
-      const logged = merged.entries.filter((e) => ids.includes(e.trackerId)).length
-      const details = [card.stages.length > 0 ? count(card.stages.length, 'stage') : '', `logged ${count(logged, 'time')}`, group ? `in ${group}` : '']
+      const entries = hidden ? merged.hidden.entries : merged.shown.entries
+      const logged = entries.filter((e) => ids.includes(e.trackerId)).length
+      const details = [
+        hidden ? 'hidden' : '',
+        card.stages.length > 0 ? count(card.stages.length, 'stage') : '',
+        `logged ${count(logged, 'time')}`,
+        group ? `in ${group}` : '',
+      ]
       return { id: card.tracker.id, name: card.tracker.name, details: details.filter((d) => d !== '').join(' · '), origin: originOf(card.tracker.id, here, fromFile) }
     })
   })
@@ -134,7 +158,7 @@
   <h2>Move to another device</h2>
   <p>Everything stays on this device. To move it, export a file locked with a passphrase, then import it on your other device.</p>
   <div class="actions">
-    <button onclick={() => exportDialog.showModal()} disabled={empty}>Export</button>
+    <button onclick={openExport} disabled={empty}>Export</button>
     <button onclick={() => importDialog.showModal()}>Import</button>
   </div>
 </section>

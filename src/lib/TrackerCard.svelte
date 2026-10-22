@@ -40,8 +40,10 @@
     // While something is dragged: where it would land, and what's being dragged.
     mark: (id: string) => Mark | undefined
     dragging: string | undefined
+    // Hidden cards sit outside the board and can't be dragged, so they show no grips.
+    movable: boolean
   }
-  let { card, entries, now, menu, renaming, rename, log, slip, mark, dragging }: Props = $props()
+  let { card, entries, now, menu, renaming, rename, log, slip, mark, dragging, movable }: Props = $props()
   const tracker = $derived(card.tracker)
   const marked = $derived(mark(tracker.id))
 
@@ -75,7 +77,9 @@
   data-drop="card"
 >
   <header>
-    <span class="grip" data-grip aria-hidden="true"></span>
+    {#if movable}
+      <span class="grip" data-grip aria-hidden="true"></span>
+    {/if}
     <div class="title">
       <Name name={tracker.name} editing={renaming === tracker.id} onsave={(name) => rename(tracker.id, name)} />
       <span class="badge">{BADGES[tracker.kind]}</span>
@@ -120,7 +124,9 @@
           data-drag
           data-drop="stage"
         >
-          <span class="grip" data-grip aria-hidden="true"></span>
+          {#if movable}
+            <span class="grip" data-grip aria-hidden="true"></span>
+          {/if}
           {#if done}
             <span class="check done" role="img" aria-label="Done today"></span>
           {:else}

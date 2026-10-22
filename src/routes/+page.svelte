@@ -15,11 +15,31 @@
   } from '#lib/arrange.ts'
   import ChoiceDialog from '#lib/ChoiceDialog.svelte'
   import ConfirmDialog from '#lib/ConfirmDialog.svelte'
-  import { apply, listEntries, listGroups, listTrackers, replaceAll, saveEntry, saveGroup, saveTracker } from '#lib/db.ts'
+  import {
+    apply,
+    applyHiding,
+    clearAttempts,
+    deleteVault,
+    listEntries,
+    listGroups,
+    listTrackers,
+    loadAttempts,
+    loadVault,
+    replaceAll,
+    saveAttempts,
+    saveEntry,
+    saveGroup,
+    saveTracker,
+    saveVault,
+    type Vault,
+  } from '#lib/db.ts'
   import { Drag } from '#lib/drag.svelte.ts'
   import GroupBox from '#lib/GroupBox.svelte'
+  import { hide, unhide, waitAfter, waitText, type Moved } from '#lib/hidden.ts'
   import type { MenuItem } from '#lib/Menu.svelte'
-  import type { Change, Entry, Group, Snapshot, Tracker } from '#lib/model.ts'
+  import { EMPTY, type Change, type DeviceData, type Entry, type Group, type Snapshot, type Tracker } from '#lib/model.ts'
+  import PinDialog from '#lib/PinDialog.svelte'
+  import { keyFor, newSalt, seal, unseal, type Bytes } from '#lib/seal.ts'
   import ThemePicker from '#lib/ThemePicker.svelte'
   import TrackerCard, { type Mark } from '#lib/TrackerCard.svelte'
   import Transfer from '#lib/Transfer.svelte'
@@ -41,6 +61,12 @@
   let renaming = $state<string>()
   let confirmDialog: ReturnType<typeof ConfirmDialog>
   let choiceDialog: ReturnType<typeof ChoiceDialog>
+  let pinDialog: ReturnType<typeof PinDialog>
+  // The hidden trackers while they're unlocked: their data, and the key that seals each change.
+  // Raw state, replaced whole on every change, since its records go straight into encryption.
+  let vault = $state.raw<{ key: CryptoKey; salt: Bytes; data: Snapshot }>()
+  // Whether this device keeps hidden trackers at all, locked or not.
+  let hasVault = $state(false)
   // The new-tracker form: open while there are no trackers, so the first step is obvious, and
   // closed after adding one, so the new card is in view.
   let formOpen = $state(false)
@@ -48,12 +74,30 @@
   const items = $derived(arrange(trackers, groups))
   // Every card in page order, grouped or not.
   const cards = $derived(items.flatMap((item) => (item.type === 'group' ? item.cards : [item.card])))
+  // The hidden cards, while unlocked. They never belong to a group.
+  const hiddenCards = $derived(vault ? arrange(vault.data.trackers, []).flatMap((item) => (item.type === 'card' ? [item.card] : [])) : [])
+  // The activity grid shows hidden trackers too, but only while they're unlocked.
+  const gridCards = $derived([...cards, ...hiddenCards])
+  const gridEntries = $derived(vault ? [...entries, ...vault.data.entries] : entries)
 
-  const loading = Promise.all([listTrackers(), listGroups(), listEntries()]).then(([savedTrackers, savedGroups, savedEntries]) => {
-    trackers = savedTrackers
-    groups = savedGroups
-    entries = savedEntries
-    formOpen = trackers.length === 0
+  const loading = Promise.all([listTrackers(), listGroups(), listEntries(), loadVault()]).then(
+    ([savedTrackers, savedGroups, savedEntries, savedVault]) => {
+      trackers = savedTrackers
+      groups = savedGroups
+      entries = savedEntries
+      hasVault = savedVault !== undefined
+      formOpen = trackers.length === 0
+    },
+  )
+
+  // Hidden trackers lock again whenever the page is out of sight: another tab, another app, or a
+  // closed laptop.
+  $effect(() => {
+    const lockWhenHidden = () => {
+      if (document.hidden) vault = undefined
+    }
+    document.addEventListener('visibilitychange', lockWhenHidden)
+    return () => document.removeEventListener('visibilitychange', lockWhenHidden)
   })
 
   // Keeps "today" and day counts current while the page stays open.
@@ -89,8 +133,12 @@
   }
 
   async function log(entry: Entry) {
-    await saveEntry(entry)
-    entries.push(entry)
+    if (isHidden(entry.trackerId)) {
+      await sealHidden({ ...vault!.data, entries: [...vault!.data.entries, entry] }, saveVault)
+    } else {
+      await saveEntry(entry)
+      entries.push(entry)
+    }
     now = Date.now()
   }
 
@@ -113,6 +161,125 @@
     entries = entries.filter((e) => !change.deleteTrackerIds.includes(e.trackerId))
   }
 
+  // Whether a tracker is one of the hidden ones, which only the unlocked vault knows about.
+  function isHidden(id: string): boolean {
+    return vault?.data.trackers.some((t) => t.id === id) ?? false
+  }
+
+  // Hidden trackers' saves run one after another, each sealing the data as it was when the change
+  // was made, so quick changes in a row all land. The state changes first, at once.
+  let sealing = Promise.resolve()
+
+  function sealHidden(data: Snapshot, write: (sealed: Vault) => Promise<void>): Promise<void> {
+    const { key, salt } = vault!
+    vault = { key, salt, data }
+    const saved = sealing.then(async () => write({ salt, ...(await seal(key, data)) }))
+    // A failed save still reaches its caller, but doesn't stop the saves after it.
+    sealing = saved.catch(() => undefined)
+    return saved
+  }
+
+  // Saves a change to the hidden trackers, as the arrangement functions describe one.
+  function changeHidden(change: Change): Promise<void> {
+    const { trackers: hidden, entries: logged } = vault!.data
+    return sealHidden(
+      {
+        trackers: withChange(hidden, change.putTrackers, change.deleteTrackerIds),
+        groups: [],
+        entries: logged.filter((e) => !change.deleteTrackerIds.includes(e.trackerId)),
+      },
+      saveVault,
+    )
+  }
+
+  // Opens the hidden trackers, asking for the PIN, or for a new one when nothing has been hidden on
+  // this device yet. `why` is a sentence saying what it's for. Resolves to whether they're open.
+  async function openHidden(title: string, confirmLabel: string, why = ''): Promise<boolean> {
+    if (vault) return true
+    const saved = await loadVault()
+    if (!saved) {
+      const answer = await pinDialog.ask({
+        mode: 'new',
+        title,
+        confirmLabel,
+        message: `${why}Pick a 4-digit PIN you'll remember. Hidden trackers are encrypted on this device with it, and only show once it's typed. It can't be recovered: if it's forgotten, they're lost.`,
+        submit: async (pin) => {
+          const salt = newSalt()
+          const key = await keyFor(pin, salt)
+          await saveVault({ salt, ...(await seal(key, EMPTY)) })
+          vault = { key, salt, data: EMPTY }
+          hasVault = true
+          return undefined
+        },
+      })
+      return answer === 'done'
+    }
+    const answer = await pinDialog.ask({
+      mode: 'existing',
+      title,
+      confirmLabel,
+      message: `${why}Type your PIN.`,
+      submit: async (pin) => {
+        // After a few wrong PINs, each try has to wait, even across reloads.
+        const attempts = await loadAttempts()
+        const wait = attempts.waitUntil - Date.now()
+        if (wait > 0) return `Too many wrong PINs. Try again in ${waitText(wait)}.`
+        const key = await keyFor(pin, saved.salt)
+        try {
+          vault = { key, salt: saved.salt, data: await unseal<Snapshot>(key, saved) }
+        } catch {
+          const failures = attempts.failures + 1
+          const next = waitAfter(failures)
+          await saveAttempts({ failures, waitUntil: Date.now() + next })
+          return next > 0 ? `Too many wrong PINs. Try again in ${waitText(next)}.` : "That PIN isn't right."
+        }
+        await clearAttempts()
+        return undefined
+      },
+    })
+    if (answer === 'forgot') await forgetHidden()
+    return answer === 'done'
+  }
+
+  async function forgetHidden() {
+    const confirmed = await confirmDialog.ask({
+      title: 'Delete your hidden trackers?',
+      message: "Without the PIN they can't be opened. This deletes them and everything logged for them, so you can set a new PIN. It can't be undone.",
+      confirmLabel: 'Delete hidden trackers',
+      danger: true,
+    })
+    if (!confirmed) return
+    await deleteVault()
+    vault = undefined
+    hasVault = false
+  }
+
+  function toggleHidden() {
+    if (vault) vault = undefined
+    else openHidden('Hidden trackers', hasVault ? 'Unlock' : 'Set PIN')
+  }
+
+  // Moves a card between what's shown and the hidden trackers: both change on the page at once,
+  // and they're saved together.
+  function moveSides(moved: Moved): Promise<void> {
+    trackers = moved.shown.trackers
+    groups = moved.shown.groups
+    entries = moved.shown.entries
+    return sealHidden(moved.hidden, (sealed) => applyHiding(moved.change, moved.entries, sealed))
+  }
+
+  async function hideTracker(tracker: Tracker) {
+    const wasLocked = vault === undefined
+    if (!(await openHidden(`Hide ${tracker.name}`, 'Hide', hasVault ? `${tracker.name} joins your hidden trackers. ` : ''))) return
+    await moveSides(hide($state.snapshot({ trackers, groups, entries }), vault!.data, tracker.id, Date.now()))
+    // Opened just to take this one in, the hidden trackers close again, so it's out of sight.
+    if (wasLocked) vault = undefined
+  }
+
+  function unhideTracker(tracker: Tracker) {
+    return moveSides(unhide($state.snapshot({ trackers, groups, entries }), vault!.data, tracker.id, Date.now()))
+  }
+
   async function moveTo(id: string, to: Destination) {
     const { change, created } = move(trackers, groups, id, to, Date.now())
     await save(change)
@@ -123,9 +290,15 @@
   async function rename(id: string, newName: string | undefined) {
     renaming = undefined
     const group = groups.find((g) => g.id === id)
-    const tracker = trackers.find((t) => t.id === id)
+    const tracker = [...trackers, ...(vault?.data.trackers ?? [])].find((t) => t.id === id)
     if (newName === undefined || newName === (group ?? tracker)?.name) return
-    if (group) {
+    if (isHidden(id)) {
+      const data = vault!.data
+      await sealHidden(
+        { ...data, trackers: data.trackers.map((t) => (t.id === id ? { ...t, name: newName, updatedAt: Date.now() } : t)) },
+        saveVault,
+      )
+    } else if (group) {
       await updateGroup({ ...$state.snapshot(group), name: newName, updatedAt: Date.now() })
     } else if (tracker) {
       const renamed = { ...$state.snapshot(tracker), name: newName, updatedAt: Date.now() }
@@ -143,23 +316,32 @@
     return updateGroup({ ...$state.snapshot(group), collapsed: !group.collapsed, updatedAt: Date.now() })
   }
 
-  // Everything on this device, for exporting.
-  function current(): Snapshot {
-    return $state.snapshot({ trackers, groups, entries })
+  // Exports and imports include the hidden trackers, so they need unlocking first, or a PIN set when
+  // an import brings hidden trackers to a device that has none. Resolves to whether to go on.
+  function readyHidden(incoming: boolean): Promise<boolean> {
+    if (vault || (!hasVault && !incoming)) return Promise.resolve(true)
+    return openHidden('Hidden trackers', hasVault ? 'Unlock' : 'Set PIN', hasVault ? 'Moving data includes your hidden trackers. ' : 'The file has hidden trackers. ')
+  }
+
+  // Everything on this device, for exporting, once `readyHidden` has said yes.
+  function current(): DeviceData {
+    return { shown: $state.snapshot({ trackers, groups, entries }), hidden: vault?.data ?? EMPTY }
   }
 
   // An import replaces what's here with the merged result the user reviewed.
-  async function importData(next: Snapshot) {
-    await replaceAll(next)
-    trackers = next.trackers
-    groups = next.groups
-    entries = next.entries
+  async function importData(next: DeviceData) {
+    trackers = next.shown.trackers
+    groups = next.shown.groups
+    entries = next.shown.entries
+    if (vault) await sealHidden(next.hidden, (sealed) => replaceAll(next.shown, sealed))
+    else await replaceAll(next.shown, undefined)
     now = Date.now()
     formOpen = trackers.length === 0
   }
 
   async function removeTracker(tracker: Tracker) {
-    const stages = trackers.filter((t) => t.parent?.id === tracker.id).length
+    const hidden = isHidden(tracker.id)
+    const stages = (hidden ? vault!.data.trackers : trackers).filter((t) => t.parent?.id === tracker.id).length
     const confirmed = await confirmDialog.ask({
       title: `Delete ${tracker.name}?`,
       message:
@@ -170,6 +352,10 @@
       danger: true,
     })
     if (!confirmed) return
+    if (hidden) {
+      await changeHidden(remove(vault!.data.trackers, [], tracker.id, Date.now()))
+      return
+    }
     await save(remove(trackers, groups, tracker.id, Date.now()))
     if (trackers.length === 0) formOpen = true
   }
@@ -181,7 +367,9 @@
       confirmLabel: 'Separate',
       danger: false,
     })
-    if (confirmed) await save(dissolve(trackers, groups, tracker.id, Date.now()))
+    if (!confirmed) return
+    if (isHidden(tracker.id)) await changeHidden(dissolve(vault!.data.trackers, [], tracker.id, Date.now()))
+    else await save(dissolve(trackers, groups, tracker.id, Date.now()))
   }
 
   type Choice = { id: string; label: string; detail: string; to: Destination }
@@ -217,6 +405,7 @@
   }
 
   function trackerMenu(tracker: Tracker): MenuItem[] {
+    if (isHidden(tracker.id)) return hiddenMenu(tracker)
     const menu: MenuItem[] = [{ label: 'Rename', run: () => (renaming = tracker.id) }]
     const parent = trackers.find((t) => t.id === tracker.parent?.id)
     const group = groups.find((g) => g.id === tracker.groupId)
@@ -231,6 +420,24 @@
       }
       if (tracker.kind === 'staged') menu.push({ label: 'Separate stages', run: () => separate(tracker) })
       if (group) menu.push({ label: `Take out of ${group.name}`, run: () => moveTo(tracker.id, after(trackers, groups, group.id)) })
+      menu.push({ label: 'Hide', run: () => hideTracker(tracker) })
+    }
+    menu.push({ label: 'Delete', critical: true, run: () => removeTracker(tracker) })
+    return menu
+  }
+
+  // A hidden card can't join groups or other cards; it can be renamed, rearranged among its
+  // stages, brought back, or deleted.
+  function hiddenMenu(tracker: Tracker): MenuItem[] {
+    const hidden = vault!.data.trackers
+    const menu: MenuItem[] = [{ label: 'Rename', run: () => (renaming = tracker.id) }]
+    const parent = hidden.find((t) => t.id === tracker.parent?.id)
+    if (parent) {
+      const out = () => changeHidden(move(hidden, [], tracker.id, after(hidden, [], parent.id), Date.now()).change)
+      menu.push({ label: `Take out of ${parent.name}`, run: out })
+    } else {
+      if (tracker.kind === 'staged') menu.push({ label: 'Separate stages', run: () => separate(tracker) })
+      menu.push({ label: 'Unhide', run: () => unhideTracker(tracker) })
     }
     menu.push({ label: 'Delete', critical: true, run: () => removeTracker(tracker) })
     return menu
@@ -300,11 +507,11 @@
   <title>Accountability</title>
 </svelte:head>
 
-{#snippet trackerCard(card: Card)}
+{#snippet trackerCard(card: Card, logged: Entry[], movable: boolean)}
   {@const ids = idsOf(card)}
   <TrackerCard
     {card}
-    entries={entries.filter((e) => ids.includes(e.trackerId))}
+    entries={logged.filter((e) => ids.includes(e.trackerId))}
     {now}
     menu={trackerMenu}
     {renaming}
@@ -313,20 +520,35 @@
     slip={logSlip}
     {mark}
     dragging={drag.subject}
+    {movable}
   />
 {/snippet}
 
 <main>
   <div class="top">
     <h1>Accountability</h1>
-    <ThemePicker />
+    <div class="controls">
+      <!-- Always here, so it gives nothing away about whether anything is hidden. -->
+      <button
+        class="icon"
+        onclick={toggleHidden}
+        aria-label={vault ? 'Lock hidden trackers' : 'Show hidden trackers'}
+        title={vault ? 'Lock hidden trackers' : 'Hidden trackers'}
+      >
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+          <rect x="5" y="11" width="14" height="10" rx="2" />
+          <path d={vault ? 'M8 11V7a4 4 0 0 1 7.75-1.4' : 'M8 11V7a4 4 0 0 1 8 0v4'} />
+        </svg>
+      </button>
+      <ThemePicker />
+    </div>
   </div>
 
   {#await loading then}
-    {#if trackers.length > 0}
+    {#if gridCards.length > 0}
       <section class="card">
         <h2>Activity</h2>
-        <ActivityGrid {cards} {entries} {now} />
+        <ActivityGrid cards={gridCards} entries={gridEntries} {now} />
       </section>
     {/if}
 
@@ -347,17 +569,33 @@
             dragging={drag.subject}
           >
             {#each item.cards as card (card.tracker.id)}
-              {@render trackerCard(card)}
+              {@render trackerCard(card, entries, true)}
             {/each}
           </GroupBox>
         {:else}
-          {@render trackerCard(item.card)}
+          {@render trackerCard(item.card, entries, true)}
         {/if}
       {/each}
     </div>
 
     {#if trackers.length > 1}
       <p class="hint">Hold and drag a card against another to group them, or onto the middle of a habit to make stages.</p>
+    {/if}
+
+    {#if vault}
+      {@const logged = vault.data.entries}
+      <section class="hidden-trackers" aria-labelledby="hidden-title">
+        <header>
+          <h2 id="hidden-title">Hidden</h2>
+          <button onclick={() => (vault = undefined)}>Lock</button>
+        </header>
+        <p>Only you can see these. They're encrypted on this device and lock again when you leave the app.</p>
+        {#each hiddenCards as card (card.tracker.id)}
+          {@render trackerCard(card, logged, false)}
+        {:else}
+          <p>Nothing is hidden yet. Choose Hide in a tracker's ⋯ menu.</p>
+        {/each}
+      </section>
     {/if}
 
     <details class="card new-tracker" bind:open={formOpen}>
@@ -404,7 +642,7 @@
       </form>
     </details>
 
-    <Transfer {current} onimport={importData} empty={trackers.length === 0} />
+    <Transfer {current} ready={readyHidden} onimport={importData} empty={trackers.length === 0 && !hasVault} />
   {:catch error}
     <p role="alert">Couldn't open your saved data: {error.message}</p>
   {/await}
@@ -416,6 +654,7 @@
 
 <ConfirmDialog bind:this={confirmDialog} />
 <ChoiceDialog bind:this={choiceDialog} />
+<PinDialog bind:this={pinDialog} />
 
 <style>
   main {
@@ -437,6 +676,42 @@
     margin: 0;
     font-size: 1.9rem;
     letter-spacing: -0.01em;
+  }
+
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .controls svg {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  /* A tray like a group's, set apart by a dashed edge as the one that locks. */
+  .hidden-trackers {
+    margin-block: 0.875rem;
+    padding: 0.6rem 0.75rem 0.1rem;
+    border: 1px dashed var(--border-strong);
+    border-radius: 1.1rem;
+    background: color-mix(in srgb, var(--ink) 3%, var(--page));
+  }
+
+  .hidden-trackers header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .hidden-trackers > p {
+    margin: 0.25rem 0 0.75rem;
+    color: var(--ink-secondary);
+    font-size: 0.85rem;
   }
 
   h2 {

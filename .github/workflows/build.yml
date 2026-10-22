@@ -1,0 +1,27 @@
+# The full build (type check, tests, production build) on every push to test or prod and on every
+# pull request, so a change that breaks it can't be promoted. Make it a required check for prod.
+name: Build
+
+on:
+  push:
+    branches: [test, prod]
+  pull_request:
+
+# Read-only: the job only needs to check the code out.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned to exact commits, so a moved tag can't swap in different code.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      # .npmrc keeps install scripts off here too.
+      - run: npm ci
+      - run: npm run build
