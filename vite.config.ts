@@ -8,10 +8,11 @@ export default defineConfig({
       adapter: adapter(),
       // The page may load and run only what comes from this site, and talk only to this site,
       // so a script that got in some other way still couldn't send anyone's data elsewhere.
-      // SvelteKit adds a nonce for its own inline script, and loosens styles itself in dev for
-      // Vite's injected <style> tags.
+      // SvelteKit allows its own inline script by its hash, and loosens styles itself in dev for
+      // Vite's injected <style> tags. A hash, not a nonce: the service worker serves one saved copy
+      // of the page again and again, and a nonce has to be new for every response.
       csp: {
-        mode: 'auto',
+        mode: 'hash',
         directives: {
           'default-src': ['self'],
           'script-src': ['self'],

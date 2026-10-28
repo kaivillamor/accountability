@@ -139,6 +139,7 @@
     </ol>
   {:else if tracker.kind === 'usage'}
     {@const today = usedToday(entries, now)}
+    {@const quick = tracker.quickAmounts ?? []}
     {#if tracker.dailyGoal}
       {@const goal = tracker.dailyGoal}
       <p class="stat">
@@ -168,6 +169,20 @@
         <dd>{formatQuantity(dailyAverage(tracker, entries, now), tracker.unit)}</dd>
       </div>
     </dl>
+    <!-- The quick amounts log with one tap, so they're the main action when there are any. -->
+    {#if quick.length > 0}
+      <div class="actions">
+        {#each quick as amount (amount)}
+          <button
+            class="primary"
+            aria-label="Log +{formatQuantity(amount, tracker.unit)} of {tracker.name}"
+            onclick={() => log({ ...moment(tracker), kind: 'used', amount })}
+          >
+            +{formatAmount(amount)}
+          </button>
+        {/each}
+      </div>
+    {/if}
     <form class="actions" onsubmit={logAmount}>
       <label class="amount">
         <input
@@ -182,7 +197,7 @@
         />
         <span aria-hidden="true">{tracker.unit}</span>
       </label>
-      <button class="primary">Log</button>
+      <button class:primary={quick.length === 0}>Log</button>
     </form>
   {:else}
     {@const days = daysWithout(tracker, entries, now)}
@@ -282,6 +297,11 @@
     margin-top: 0.85rem;
   }
 
+  /* The typed box under the quick amounts. */
+  .actions + .actions {
+    margin-top: 0.5rem;
+  }
+
   .amount {
     display: inline-flex;
     align-items: center;
@@ -313,43 +333,5 @@
   .stage :global(.name) {
     flex: 1;
     min-width: 0;
-  }
-
-  /* A 44px tap target around a round check. */
-  .check {
-    display: grid;
-    flex: none;
-    place-items: center;
-    width: 2.75rem;
-    min-height: 2.75rem;
-    padding: 0;
-    border: 0;
-    background: none;
-  }
-
-  .check::before {
-    content: '';
-    box-sizing: border-box;
-    width: 1.4rem;
-    height: 1.4rem;
-    border: 2px solid var(--border-strong);
-    border-radius: 50%;
-  }
-
-  @media (hover: hover) {
-    button.check:hover::before {
-      border-color: var(--accent);
-    }
-  }
-
-  .check.done::before {
-    content: '✓';
-    display: grid;
-    place-items: center;
-    border-color: var(--accent);
-    background: var(--accent);
-    color: var(--accent-ink);
-    font-size: 0.85rem;
-    font-weight: 700;
   }
 </style>

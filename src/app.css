@@ -176,6 +176,45 @@ input::placeholder {
   font-weight: 600;
 }
 
+/* A round check for a stage, on its card and in the Today list, in a 44px tap target. A button
+   until it's done, then a filled check. */
+.check {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 2.75rem;
+  min-height: 2.75rem;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.check::before {
+  content: '';
+  box-sizing: border-box;
+  width: 1.4rem;
+  height: 1.4rem;
+  border: 2px solid var(--border-strong);
+  border-radius: 50%;
+}
+
+@media (hover: hover) {
+  button.check:hover::before {
+    border-color: var(--accent);
+  }
+}
+
+.check.done::before {
+  content: '✓';
+  display: grid;
+  place-items: center;
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
 /* A meter: the accent fill on a lighter tint of the accent. The fill slides to its level, and
    once it's full it turns green as it arrives at the end. */
 .meter {

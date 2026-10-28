@@ -191,6 +191,14 @@ export async function clearAttempts(): Promise<void> {
   return done(transaction)
 }
 
+// Takes back one logged moment, for Undo right after logging it.
+export async function deleteEntry(id: string): Promise<void> {
+  const db = await open()
+  const transaction = db.transaction('entries', 'readwrite')
+  transaction.objectStore('entries').delete(id)
+  return done(transaction)
+}
+
 export const listTrackers = () => getAll('trackers')
 export const listEntries = () => getAll('entries')
 export const listGroups = () => getAll('groups')

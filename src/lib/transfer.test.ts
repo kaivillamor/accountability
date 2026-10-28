@@ -29,7 +29,10 @@ function shape({ trackers, groups }: Snapshot): string {
 
 const data: DeviceData = {
   shown: {
-    trackers: [habit('run', { groupId: 'morning' }), { id: 'water', name: 'Water', createdAt: 0, updatedAt: 0, order: 1, kind: 'usage', unit: 'ounces', dailyGoal: 64 }],
+    trackers: [
+      habit('run', { groupId: 'morning' }),
+      { id: 'water', name: 'Water', createdAt: 0, updatedAt: 0, order: 1, kind: 'usage', unit: 'ounces', dailyGoal: 64, quickAmounts: [8, 16] },
+    ],
     groups: [group('morning')],
     entries: [done('e1', 'run'), { id: 'e2', trackerId: 'water', at: 1_000, kind: 'used', amount: 12.5 }],
   },
@@ -84,6 +87,13 @@ test('a tracker or group on both devices keeps its newer version', () => {
   const here = shown({ trackers: [habit('run', { name: 'Run', updatedAt: 10 }), habit('read', { order: 1, name: 'Read', updatedAt: 30 })] })
   const there = shown({ trackers: [habit('run', { name: 'Morning run', updatedAt: 20 }), habit('read', { order: 1, name: 'Reading', updatedAt: 25 })] })
   assert.equal(shape(merge(here, there, NOW).shown), 'Morning run Read')
+})
+
+test('quick amounts come with the newer version of their tracker', () => {
+  const water = (updatedAt: number, quickAmounts: number[]): Tracker => ({ id: 'water', name: 'Water', createdAt: 0, updatedAt, order: 0, kind: 'usage', unit: 'ounces', quickAmounts })
+  const amounts = (data: DeviceData) => data.shown.trackers.map((t) => t.kind === 'usage' && t.quickAmounts)
+  assert.deepEqual(amounts(merge(shown({ trackers: [water(10, [8])] }), shown({ trackers: [water(20, [8, 16])] }), NOW)), [[8, 16]])
+  assert.deepEqual(amounts(merge(shown({ trackers: [water(30, [12])] }), shown({ trackers: [water(20, [8, 16])] }), NOW)), [[12]])
 })
 
 test('a card taken out of its group on the other device, later, comes out here too', () => {

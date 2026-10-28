@@ -13,8 +13,9 @@ export type Tracker = {
   parent?: { id: string; since: number }
 } & (
   | { kind: 'habit' }
-  // `dailyGoal` is optional: reach at least this much each day, in `unit`.
-  | { kind: 'usage'; unit: string; dailyGoal?: number }
+  // `dailyGoal` is optional: reach at least this much each day, in `unit`. `quickAmounts` are the
+  // amounts logged with one tap, set from the tracker's menu (see amounts.ts).
+  | { kind: 'usage'; unit: string; dailyGoal?: number; quickAmounts?: number[] }
   | { kind: 'quit' }
   // A habit made of stages: the habit trackers whose `parent` points here. It has no entries of its own.
   | { kind: 'staged' }

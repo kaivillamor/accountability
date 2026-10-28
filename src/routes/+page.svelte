@@ -1,5 +1,6 @@
 <script lang="ts">
   import ActivityGrid from '#lib/ActivityGrid.svelte'
+  import AmountsDialog from '#lib/AmountsDialog.svelte'
   import {
     after,
     arrange,
@@ -19,6 +20,7 @@
     apply,
     applyHiding,
     clearAttempts,
+    deleteEntry,
     deleteVault,
     listEntries,
     listGroups,
@@ -36,14 +38,20 @@
   import { Drag } from '#lib/drag.svelte.ts'
   import GroupBox from '#lib/GroupBox.svelte'
   import { hide, unhide, waitAfter, waitText, type Moved } from '#lib/hidden.ts'
+  import Install from '#lib/Install.svelte'
   import type { MenuItem } from '#lib/Menu.svelte'
   import { EMPTY, type Change, type DeviceData, type Entry, type Group, type Snapshot, type Tracker } from '#lib/model.ts'
   import PinDialog from '#lib/PinDialog.svelte'
   import { keyFor, newSalt, seal, unseal, type Bytes } from '#lib/seal.ts'
   import ThemePicker from '#lib/ThemePicker.svelte'
+  import Today from '#lib/Today.svelte'
   import TrackerCard, { type Mark } from '#lib/TrackerCard.svelte'
   import Transfer from '#lib/Transfer.svelte'
-  import { count } from '#lib/text.ts'
+  import { count, formatQuantity } from '#lib/text.ts'
+  import UndoBar from '#lib/UndoBar.svelte'
+  import { keepUpToDate } from '#lib/updates.ts'
+
+  keepUpToDate()
 
   // The kinds the form creates. A staged habit comes from dragging habits together.
   type NewKind = 'habit' | 'usage' | 'quit'
@@ -62,6 +70,7 @@
   let confirmDialog: ReturnType<typeof ConfirmDialog>
   let choiceDialog: ReturnType<typeof ChoiceDialog>
   let pinDialog: ReturnType<typeof PinDialog>
+  let amountsDialog: ReturnType<typeof AmountsDialog>
   // The hidden trackers while they're unlocked: their data, and the key that seals each change.
   // Raw state, replaced whole on every change, since its records go straight into encryption.
   let vault = $state.raw<{ key: CryptoKey; salt: Bytes; data: Snapshot }>()
@@ -133,13 +142,54 @@
   }
 
   async function log(entry: Entry) {
-    if (isHidden(entry.trackerId)) {
+    const hidden = isHidden(entry.trackerId)
+    if (hidden) {
       await sealHidden({ ...vault!.data, entries: [...vault!.data.entries, entry] }, saveVault)
     } else {
       await saveEntry(entry)
       entries.push(entry)
     }
     now = Date.now()
+    clearTimeout(undoTimer)
+    undoable = { entry, hidden, message: loggedText(entry) }
+    undoTimer = setTimeout(() => (undoable = undefined), UNDO_TIME)
+  }
+
+  // The last thing logged can be taken back for a few seconds, for a tap that missed.
+  const UNDO_TIME = 6000
+  let undoable = $state<{ entry: Entry; hidden: boolean; message: string }>()
+  let undoTimer: ReturnType<typeof setTimeout> | undefined
+  // A hidden tracker's entry can only be taken back while the hidden trackers are open.
+  const undoMessage = $derived(undoable && (!undoable.hidden || vault) ? undoable.message : undefined)
+
+  async function undo() {
+    const { entry, hidden } = undoable!
+    clearTimeout(undoTimer)
+    undoable = undefined
+    if (hidden) {
+      const data = vault!.data
+      await sealHidden({ ...data, entries: data.entries.filter((e) => e.id !== entry.id) }, saveVault)
+    } else {
+      await deleteEntry(entry.id)
+      entries = entries.filter((e) => e.id !== entry.id)
+    }
+    now = Date.now()
+  }
+
+  // What the undo bar says was logged, like "Water: +8 ounces" or "Stretch: done".
+  function loggedText(entry: Entry): string {
+    const tracker = [...trackers, ...(vault?.data.trackers ?? [])].find((t) => t.id === entry.trackerId)!
+    switch (entry.kind) {
+      case 'done':
+        return `${tracker.name}: done`
+      case 'used':
+        // Only usage trackers take amounts.
+        return `${tracker.name}: +${formatQuantity(entry.amount, (tracker as Extract<Tracker, { kind: 'usage' }>).unit)}`
+      case 'resisted':
+        return `${tracker.name}: resisted`
+      case 'slipped':
+        return `${tracker.name}: slipped`
+    }
   }
 
   async function logSlip(tracker: Tracker) {
@@ -292,19 +342,24 @@
     const group = groups.find((g) => g.id === id)
     const tracker = [...trackers, ...(vault?.data.trackers ?? [])].find((t) => t.id === id)
     if (newName === undefined || newName === (group ?? tracker)?.name) return
-    if (isHidden(id)) {
+    if (group) await updateGroup({ ...$state.snapshot(group), name: newName, updatedAt: Date.now() })
+    else if (tracker) await updateTracker({ ...$state.snapshot(tracker), name: newName, updatedAt: Date.now() })
+  }
+
+  // Saves a changed tracker, shown or hidden.
+  async function updateTracker(next: Tracker) {
+    if (isHidden(next.id)) {
       const data = vault!.data
-      await sealHidden(
-        { ...data, trackers: data.trackers.map((t) => (t.id === id ? { ...t, name: newName, updatedAt: Date.now() } : t)) },
-        saveVault,
-      )
-    } else if (group) {
-      await updateGroup({ ...$state.snapshot(group), name: newName, updatedAt: Date.now() })
-    } else if (tracker) {
-      const renamed = { ...$state.snapshot(tracker), name: newName, updatedAt: Date.now() }
-      await saveTracker(renamed)
-      trackers = trackers.map((t) => (t.id === id ? renamed : t))
+      await sealHidden({ ...data, trackers: data.trackers.map((t) => (t.id === next.id ? next : t)) }, saveVault)
+    } else {
+      await saveTracker(next)
+      trackers = trackers.map((t) => (t.id === next.id ? next : t))
     }
+  }
+
+  async function setQuickAmounts(tracker: Extract<Tracker, { kind: 'usage' }>) {
+    const quickAmounts = await amountsDialog.edit({ name: tracker.name, unit: tracker.unit, amounts: tracker.quickAmounts ?? [] })
+    if (quickAmounts) await updateTracker({ ...$state.snapshot(tracker), quickAmounts, updatedAt: Date.now() })
   }
 
   async function updateGroup(next: Group) {
@@ -407,6 +462,7 @@
   function trackerMenu(tracker: Tracker): MenuItem[] {
     if (isHidden(tracker.id)) return hiddenMenu(tracker)
     const menu: MenuItem[] = [{ label: 'Rename', run: () => (renaming = tracker.id) }]
+    if (tracker.kind === 'usage') menu.push({ label: 'Quick amounts…', run: () => setQuickAmounts(tracker) })
     const parent = trackers.find((t) => t.id === tracker.parent?.id)
     const group = groups.find((g) => g.id === tracker.groupId)
     if (parent) {
@@ -431,6 +487,7 @@
   function hiddenMenu(tracker: Tracker): MenuItem[] {
     const hidden = vault!.data.trackers
     const menu: MenuItem[] = [{ label: 'Rename', run: () => (renaming = tracker.id) }]
+    if (tracker.kind === 'usage') menu.push({ label: 'Quick amounts…', run: () => setQuickAmounts(tracker) })
     const parent = hidden.find((t) => t.id === tracker.parent?.id)
     if (parent) {
       const out = () => changeHidden(move(hidden, [], tracker.id, after(hidden, [], parent.id), Date.now()).change)
@@ -544,8 +601,12 @@
     </div>
   </div>
 
+  <Install hasData={trackers.length > 0 || hasVault} />
+
   {#await loading then}
     {#if gridCards.length > 0}
+      <Today {items} hidden={hiddenCards} entries={gridEntries} {now} {log} slip={logSlip} />
+
       <section class="card">
         <h2>Activity</h2>
         <ActivityGrid cards={gridCards} entries={gridEntries} {now} />
@@ -655,6 +716,8 @@
 <ConfirmDialog bind:this={confirmDialog} />
 <ChoiceDialog bind:this={choiceDialog} />
 <PinDialog bind:this={pinDialog} />
+<AmountsDialog bind:this={amountsDialog} />
+<UndoBar message={undoMessage} {undo} />
 
 <style>
   main {
